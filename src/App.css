@@ -518,9 +518,9 @@ body {
   color: var(--text-main);
 }
 
-.track-path {
+.track-subtitle {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;

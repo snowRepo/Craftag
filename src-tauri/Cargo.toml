@@ -1,6 +1,6 @@
 [package]
 name = "craftag"
-version = "1.0.0"
+version = "1.0.3"
 description = "Craftag — Cross-platform audio tag editor"
 authors = ["you"]
 edition = "2021"

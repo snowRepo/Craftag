@@ -584,7 +584,7 @@ function App() {
                 </div>
                 <div className="track-header">
                   <h2>{activeFile.title || activeFile.filename}</h2>
-                  <p className="track-path">{activeFile.path}</p>
+                  <p className="track-subtitle">{activeFile.artist || 'Unknown Artist'}</p>
                 </div>
               </div>
 
