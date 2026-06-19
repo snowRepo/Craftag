@@ -348,15 +348,14 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  border: 2px dashed var(--input-border);
+  gap: 16px;
+  border: 2px solid transparent;
   border-radius: 20px;
   padding: 52px 48px;
   text-align: center;
   cursor: pointer;
   transition: all 0.2s ease;
-  background: var(--panel-bg);
-  box-shadow: var(--shadow-sm);
+  background: transparent;
   max-width: 380px;
   width: 100%;
   outline: none;
@@ -365,28 +364,27 @@ body {
 .dropzone:hover,
 .dropzone:focus,
 .dropzone.dragging {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 4px var(--accent-glow);
-  transform: scale(1.01);
+  transform: scale(1.02);
+  opacity: 0.8;
 }
 
 .dropzone-icon {
-  color: var(--accent);
-  opacity: 0.75;
+  color: var(--text-muted);
+  opacity: 0.6;
 }
 
 .dropzone h3 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: -0.2px;
 }
 
 .dropzone p {
   margin: 0;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-subtle);
 }
 
 /* ─── Editor Card ──────────────────────────────────────── */
