@@ -18,6 +18,10 @@ pub struct AudioFile {
     pub year: Option<u32>,
     pub genre: Option<String>,
     pub track: Option<u32>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub disc: Option<u32>,
+    pub comments: Option<String>,
     pub has_art: bool,
 }
 
@@ -45,6 +49,10 @@ fn parse_file(path: &Path) -> Result<AudioFile, String> {
             year: t.get(ItemKey::Year).and_then(|i| i.value().text()).and_then(|t| t.parse::<u32>().ok()),
             genre: t.genre().map(|s| s.into_owned()),
             track: t.track(),
+            album_artist: t.get(ItemKey::AlbumArtist).and_then(|i| i.value().text()).map(|s| s.to_string()),
+            composer: t.get(ItemKey::Composer).and_then(|i| i.value().text()).map(|s| s.to_string()),
+            disc: t.disk(),
+            comments: t.get(ItemKey::Comment).and_then(|i| i.value().text()).map(|s| s.to_string()),
             has_art: !t.pictures().is_empty(),
         })
     } else {
@@ -57,6 +65,10 @@ fn parse_file(path: &Path) -> Result<AudioFile, String> {
             year: None,
             genre: None,
             track: None,
+            album_artist: None,
+            composer: None,
+            disc: None,
+            comments: None,
             has_art: false,
         })
     }
@@ -135,6 +147,10 @@ fn save_audio_tags(file: AudioFile) -> Result<(), String> {
         }
         if let Some(genre) = file.genre { tag.set_genre(genre); } else { tag.remove_genre(); }
         if let Some(track) = file.track { tag.set_track(track); } else { tag.remove_track(); }
+        if let Some(album_artist) = file.album_artist { tag.insert_text(ItemKey::AlbumArtist, album_artist); } else { tag.remove_key(ItemKey::AlbumArtist); }
+        if let Some(composer) = file.composer { tag.insert_text(ItemKey::Composer, composer); } else { tag.remove_key(ItemKey::Composer); }
+        if let Some(disc) = file.disc { tag.set_disk(disc); } else { tag.remove_disk(); }
+        if let Some(comments) = file.comments { tag.insert_text(ItemKey::Comment, comments); } else { tag.remove_key(ItemKey::Comment); }
     }
 
     tagged_file

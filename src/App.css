@@ -477,26 +477,28 @@ body {
   border-radius: inherit;
 }
 
-.remove-art-btn {
-  background: var(--danger-soft);
-  border: 1px solid rgba(0,0,0,0.06);
-  border-radius: 6px;
-  padding: 4px 10px;
-  color: var(--danger);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
+.art-remove-x {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
   display: flex;
   align-items: center;
-  gap: 4px;
-  width: 116px;
   justify-content: center;
-  transition: background 0.15s ease;
-  font-family: inherit;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.15s ease;
+  padding: 0;
 }
 
-.remove-art-btn:hover {
-  background: rgba(217, 64, 64, 0.16);
+.art-remove-x:hover {
+  background: rgba(0, 0, 0, 0.8);
+  transform: scale(1.05);
 }
 
 /* ─── Track Header ─────────────────────────────────────── */
@@ -528,22 +530,34 @@ body {
 /* ─── Form ─────────────────────────────────────────────── */
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px 10px;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .form-group.full-width {
-  grid-column: 1 / -1;
+  grid-column: span 8;
+}
+
+.form-group.half-width {
+  grid-column: span 4;
+}
+
+.form-group.quarter-width {
+  grid-column: span 2;
+}
+
+.form-group.eighth-width {
+  grid-column: span 1;
 }
 
 label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -554,9 +568,9 @@ input {
   background: var(--input-bg);
   border: 1px solid var(--input-border);
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   color: var(--text-main);
-  font-size: 13px;
+  font-size: 12px;
   font-family: inherit;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   outline: none;

@@ -19,6 +19,10 @@ interface AudioFile {
   year: number | null;
   genre: string | null;
   track: number | null;
+  album_artist: string | null;
+  composer: string | null;
+  disc: number | null;
+  comments: string | null;
   has_art: boolean;
 }
 
@@ -27,6 +31,10 @@ interface BatchFields {
   artist: string;
   year: string;
   genre: string;
+  album_artist: string;
+  composer: string;
+  disc: string;
+  comments: string;
 }
 
 interface Toast {
@@ -41,6 +49,8 @@ function App() {
   const [files, setFiles]             = useState<AudioFile[]>([]);
   const [activeFile, setActiveFile]   = useState<AudioFile | null>(null);
   const [albumArt, setAlbumArt]       = useState<string | null>(null);
+  const [stagedArtPath, setStagedArtPath] = useState<string | null>(null);
+  const [stagedArtRemoved, setStagedArtRemoved] = useState<boolean>(false);
   const [isSaving, setIsSaving]       = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -52,7 +62,7 @@ function App() {
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
 
   // Batch editor
-  const [batchFields, setBatchFields] = useState<BatchFields>({ album: '', artist: '', year: '', genre: '' });
+  const [batchFields, setBatchFields] = useState<BatchFields>({ album: '', artist: '', year: '', genre: '', album_artist: '', composer: '', disc: '', comments: '' });
   const [batchArt, setBatchArt]       = useState<string | null>(null);
   const [batchArtPath, setBatchArtPath] = useState<string | null>(null);
   const [isApplying, setIsApplying]   = useState(false);
@@ -117,6 +127,10 @@ function App() {
       artist: common(f => f.artist),
       year:   common(f => f.year?.toString()),
       genre:  common(f => f.genre),
+      album_artist: common(f => f.album_artist),
+      composer: common(f => f.composer),
+      disc:   common(f => f.disc?.toString()),
+      comments: common(f => f.comments),
     });
     setBatchArt(null);
     setBatchArtPath(null);
@@ -192,6 +206,8 @@ function App() {
   const handleSelectFile = async (file: AudioFile) => {
     setActiveFile(file);
     setAlbumArt(null);
+    setStagedArtPath(null);
+    setStagedArtRemoved(false);
     if (file.has_art) {
       try {
         const art = await invoke<string | null>('get_album_art', { path: file.path });
@@ -252,10 +268,17 @@ function App() {
     setIsSaving(true);
     try {
       await invoke('save_audio_tags', { file: activeFile });
+      if (stagedArtPath) {
+        await invoke('set_album_art', { audioPath: activeFile.path, imagePath: stagedArtPath });
+      } else if (stagedArtRemoved) {
+        await invoke('remove_album_art', { audioPath: activeFile.path });
+      }
+      setStagedArtPath(null);
+      setStagedArtRemoved(false);
       addToast('Tags saved.', 'success');
     } catch { addToast('Failed to save tags.', 'error'); }
     finally { setIsSaving(false); }
-  }, [activeFile, isSaving, addToast]);
+  }, [activeFile, isSaving, stagedArtPath, stagedArtRemoved, addToast]);
 
   useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
 
@@ -265,9 +288,23 @@ function App() {
     setIsSavingAll(true);
     let ok = 0, fail = 0;
     for (const file of files) {
-      try { await invoke('save_audio_tags', { file }); ok++; }
+      try { 
+        await invoke('save_audio_tags', { file }); 
+        
+        // If this is the active file, commit its staged art
+        if (activeFile && file.path === activeFile.path) {
+          if (stagedArtPath) {
+            await invoke('set_album_art', { audioPath: file.path, imagePath: stagedArtPath });
+          } else if (stagedArtRemoved) {
+            await invoke('remove_album_art', { audioPath: file.path });
+          }
+        }
+        ok++; 
+      }
       catch { fail++; }
     }
+    setStagedArtPath(null);
+    setStagedArtRemoved(false);
     setIsSavingAll(false);
     fail === 0
       ? addToast(`All ${ok} files saved.`, 'success')
@@ -296,26 +333,24 @@ function App() {
     try {
       const selected = await open({ multiple: false, filters: [{ name: 'Images', extensions: ['jpg','jpeg','png','gif','bmp'] }] });
       if (!selected || typeof selected !== 'string') return;
-      await invoke('set_album_art', { audioPath: activeFile.path, imagePath: selected });
-      const art = await invoke<string | null>('get_album_art', { path: activeFile.path });
-      setAlbumArt(art);
+      const preview = await invoke<string>('read_image', { path: selected });
+      setAlbumArt(preview);
+      setStagedArtPath(selected);
+      setStagedArtRemoved(false);
       const updated = { ...activeFile, has_art: true };
       setActiveFile(updated);
       setFiles(prev => prev.map(f => f.path === activeFile.path ? updated : f));
-      addToast('Album art updated.', 'success');
-    } catch { addToast('Failed to set album art.', 'error'); }
+    } catch { addToast('Failed to load image preview.', 'error'); }
   };
 
-  const handleRemoveArt = async () => {
+  const handleRemoveArt = () => {
     if (!activeFile) return;
-    try {
-      await invoke('remove_album_art', { audioPath: activeFile.path });
-      setAlbumArt(null);
-      const updated = { ...activeFile, has_art: false };
-      setActiveFile(updated);
-      setFiles(prev => prev.map(f => f.path === activeFile.path ? updated : f));
-      addToast('Album art removed.', 'success');
-    } catch { addToast('Failed to remove album art.', 'error'); }
+    setAlbumArt(null);
+    setStagedArtPath(null);
+    setStagedArtRemoved(true);
+    const updated = { ...activeFile, has_art: false };
+    setActiveFile(updated);
+    setFiles(prev => prev.map(f => f.path === activeFile.path ? updated : f));
   };
 
   /* ── Batch art ──────────────────────────────────────── */
@@ -466,12 +501,12 @@ function App() {
                       : <div className="art-placeholder"><ImageIcon size={28} /><span>Set Art</span></div>
                     }
                     <div className="art-overlay"><Camera size={18} /><span>Choose</span></div>
+                    {batchArt && (
+                      <button className="art-remove-x" onClick={(e) => { e.stopPropagation(); setBatchArt(null); setBatchArtPath(null); }} title="Remove Art">
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
-                  {batchArt && (
-                    <button className="remove-art-btn" onClick={() => { setBatchArt(null); setBatchArtPath(null); }}>
-                      <Trash2 size={13} /> Remove
-                    </button>
-                  )}
                 </div>
 
                 <div className="batch-file-list-preview">
@@ -490,39 +525,35 @@ function App() {
               <div className="form-grid">
                 <div className="form-group full-width">
                   <label>Album</label>
-                  <input
-                    type="text"
-                    value={batchFields.album}
-                    onChange={e => setBatchFields(p => ({ ...p, album: e.target.value }))}
-                    placeholder="Album name for all files"
-                  />
+                  <input type="text" value={batchFields.album} onChange={e => setBatchFields(p => ({ ...p, album: e.target.value }))} placeholder="Album name for all files" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
                   <label>Artist</label>
-                  <input
-                    type="text"
-                    value={batchFields.artist}
-                    onChange={e => setBatchFields(p => ({ ...p, artist: e.target.value }))}
-                    placeholder="Artist for all files"
-                  />
+                  <input type="text" value={batchFields.artist} onChange={e => setBatchFields(p => ({ ...p, artist: e.target.value }))} placeholder="Artist for all files" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
+                  <label>Album Artist</label>
+                  <input type="text" value={batchFields.album_artist} onChange={e => setBatchFields(p => ({ ...p, album_artist: e.target.value }))} placeholder="Album Artist for all files" />
+                </div>
+                <div className="form-group half-width">
                   <label>Genre</label>
-                  <input
-                    type="text"
-                    value={batchFields.genre}
-                    onChange={e => setBatchFields(p => ({ ...p, genre: e.target.value }))}
-                    placeholder="Genre for all files"
-                  />
+                  <input type="text" value={batchFields.genre} onChange={e => setBatchFields(p => ({ ...p, genre: e.target.value }))} placeholder="Genre for all files" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
+                  <label>Composer</label>
+                  <input type="text" value={batchFields.composer} onChange={e => setBatchFields(p => ({ ...p, composer: e.target.value }))} placeholder="Composer for all files" />
+                </div>
+                <div className="form-group quarter-width">
                   <label>Year</label>
-                  <input
-                    type="number"
-                    value={batchFields.year}
-                    onChange={e => setBatchFields(p => ({ ...p, year: e.target.value }))}
-                    placeholder="YYYY"
-                  />
+                  <input type="number" value={batchFields.year} onChange={e => setBatchFields(p => ({ ...p, year: e.target.value }))} placeholder="YYYY" />
+                </div>
+                <div className="form-group quarter-width">
+                  <label>Disc No</label>
+                  <input type="number" value={batchFields.disc} onChange={e => setBatchFields(p => ({ ...p, disc: e.target.value }))} placeholder="e.g. 1" />
+                </div>
+                <div className="form-group full-width">
+                  <label>Comments</label>
+                  <input type="text" value={batchFields.comments} onChange={e => setBatchFields(p => ({ ...p, comments: e.target.value }))} placeholder="Comments for all files" />
                 </div>
               </div>
 
@@ -544,12 +575,12 @@ function App() {
                       : <div className="art-placeholder"><ImageIcon size={28} /><span>No Art</span></div>
                     }
                     <div className="art-overlay"><Camera size={18} /><span>Change</span></div>
+                    {albumArt && (
+                      <button className="art-remove-x" onClick={(e) => { e.stopPropagation(); handleRemoveArt(); }} title="Remove Art">
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
-                  {albumArt && (
-                    <button className="remove-art-btn" onClick={handleRemoveArt}>
-                      <Trash2 size={13} /> Remove
-                    </button>
-                  )}
                 </div>
                 <div className="track-header">
                   <h2>{activeFile.title || activeFile.filename}</h2>
@@ -560,33 +591,43 @@ function App() {
               <div className="form-grid">
                 <div className="form-group full-width">
                   <label htmlFor="field-title">Title</label>
-                  <input id="field-title" type="text" value={activeFile.title || ''}
-                    onChange={e => handleChange('title', e.target.value)} placeholder="Track Title" />
+                  <input id="field-title" type="text" value={activeFile.title || ''} onChange={e => handleChange('title', e.target.value)} placeholder="Track Title" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
                   <label htmlFor="field-artist">Artist</label>
-                  <input id="field-artist" type="text" value={activeFile.artist || ''}
-                    onChange={e => handleChange('artist', e.target.value)} placeholder="Artist Name" />
+                  <input id="field-artist" type="text" value={activeFile.artist || ''} onChange={e => handleChange('artist', e.target.value)} placeholder="Artist Name" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
+                  <label htmlFor="field-album-artist">Album Artist</label>
+                  <input id="field-album-artist" type="text" value={activeFile.album_artist || ''} onChange={e => handleChange('album_artist', e.target.value)} placeholder="Album Artist" />
+                </div>
+                <div className="form-group half-width">
                   <label htmlFor="field-album">Album</label>
-                  <input id="field-album" type="text" value={activeFile.album || ''}
-                    onChange={e => handleChange('album', e.target.value)} placeholder="Album Name" />
+                  <input id="field-album" type="text" value={activeFile.album || ''} onChange={e => handleChange('album', e.target.value)} placeholder="Album Name" />
                 </div>
-                <div className="form-group">
-                  <label htmlFor="field-year">Year</label>
-                  <input id="field-year" type="number" value={activeFile.year || ''}
-                    onChange={e => handleChange('year', e.target.value ? parseInt(e.target.value) : null)} placeholder="YYYY" />
+                <div className="form-group half-width">
+                  <label htmlFor="field-composer">Composer</label>
+                  <input id="field-composer" type="text" value={activeFile.composer || ''} onChange={e => handleChange('composer', e.target.value)} placeholder="Composer Name" />
                 </div>
-                <div className="form-group">
+                <div className="form-group half-width">
                   <label htmlFor="field-genre">Genre</label>
-                  <input id="field-genre" type="text" value={activeFile.genre || ''}
-                    onChange={e => handleChange('genre', e.target.value)} placeholder="e.g. Electronic" />
+                  <input id="field-genre" type="text" value={activeFile.genre || ''} onChange={e => handleChange('genre', e.target.value)} placeholder="e.g. Electronic" />
                 </div>
-                <div className="form-group">
-                  <label htmlFor="field-track">Track No</label>
-                  <input id="field-track" type="number" value={activeFile.track || ''}
-                    onChange={e => handleChange('track', e.target.value ? parseInt(e.target.value) : null)} placeholder="e.g. 1" />
+                <div className="form-group quarter-width">
+                  <label htmlFor="field-year">Year</label>
+                  <input id="field-year" type="number" value={activeFile.year || ''} onChange={e => handleChange('year', e.target.value ? parseInt(e.target.value) : null)} placeholder="YYYY" />
+                </div>
+                <div className="form-group eighth-width">
+                  <label htmlFor="field-track">Track</label>
+                  <input id="field-track" type="number" value={activeFile.track || ''} onChange={e => handleChange('track', e.target.value ? parseInt(e.target.value) : null)} placeholder="1" />
+                </div>
+                <div className="form-group eighth-width">
+                  <label htmlFor="field-disc">Disc</label>
+                  <input id="field-disc" type="number" value={activeFile.disc || ''} onChange={e => handleChange('disc', e.target.value ? parseInt(e.target.value) : null)} placeholder="1" />
+                </div>
+                <div className="form-group full-width">
+                  <label htmlFor="field-comments">Comments</label>
+                  <input id="field-comments" type="text" value={activeFile.comments || ''} onChange={e => handleChange('comments', e.target.value)} placeholder="Add comments, DJ cues, etc." />
                 </div>
               </div>
 
