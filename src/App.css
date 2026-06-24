@@ -807,3 +807,85 @@ button.secondary:hover {
   border-color: var(--accent);
 }
 
+/* ─── EULA Screen ──────────────────────────────────────── */
+.eula-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.eula-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--bg-main);
+}
+
+.eula-modal {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+}
+
+.eula-modal h2 {
+  padding: 20px 24px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-main);
+}
+
+.eula-scroll-area {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.eula-scroll-area p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.eula-scroll-area strong {
+  color: var(--text-main);
+}
+
+.eula-footer {
+  padding: 20px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-main);
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+.eula-acknowledge {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.eula-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

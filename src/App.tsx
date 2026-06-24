@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
-  Music, Image as ImageIcon, UploadCloud,
+  Music, Image as ImageIcon, Upload,
   X, Camera, Trash2, CheckCircle, AlertCircle,
   Moon, Sun, Layers, FolderOpen
 } from 'lucide-react';
@@ -56,6 +56,7 @@ function App() {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [toasts, setToasts]           = useState<Toast[]>([]);
   const [darkMode, setDarkMode]       = useState(() => localStorage.getItem('craftag-theme') === 'dark');
+  const [eulaAccepted, setEulaAccepted] = useState(() => localStorage.getItem('craftag-eula-accepted') === 'true');
 
   // Multi-select
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
@@ -396,6 +397,39 @@ function App() {
   };
 
   /* ── Render ─────────────────────────────────────────── */
+  if (!eulaAccepted) {
+    return (
+      <div className="app-root eula-root">
+        <div className="titlebar" data-tauri-drag-region>
+          <span className="titlebar-title">Craftag</span>
+        </div>
+        <div className="eula-container">
+          <div className="eula-modal animate-fade-in">
+            <h2>End User License Agreement</h2>
+            <div className="eula-scroll-area">
+              <p><strong>IMPORTANT – READ CAREFULLY:</strong> This End User License Agreement ("EULA") is a legal agreement between you and the creator of Craftag. By installing, copying, or otherwise using Craftag, you agree to be bound by the terms of this EULA. If you do not agree, do not use the software.</p>
+              <p><strong>1. GRANT OF LICENSE</strong><br/>The creator of Craftag grants you a revocable, non-exclusive, non-transferable, limited license to download, install, and use the Application strictly in accordance with the terms of this Agreement. This software is provided free of charge.</p>
+              <p><strong>2. RESTRICTIONS</strong><br/>You agree not to, and you will not permit others to:<br/>a) License, sell, rent, lease, assign, distribute, transmit, host, outsource, disclose or otherwise commercially exploit the Application.<br/>b) Modify, make derivative works of, disassemble, decrypt, reverse compile or reverse engineer any part of the Application.</p>
+              <p><strong>3. COPYRIGHT</strong><br/>All title, including but not limited to copyrights, in and to Craftag and any copies thereof are owned by its creator.</p>
+              <p><strong>4. NO WARRANTIES</strong><br/>Craftag is provided "As Is" and without any warranty of any kind. The creator explicitly disclaims any warranties of merchantability, fitness for a particular purpose, and non-infringement.</p>
+              <p><strong>5. LIMITATION OF LIABILITY</strong><br/>In no event shall the creator of Craftag be liable for any special, incidental, indirect, or consequential damages whatsoever arising out of the use of or inability to use the software.</p>
+            </div>
+            <div className="eula-footer">
+              <p className="eula-acknowledge">By clicking "I Accept", you acknowledge that you have read this EULA, understand it, and agree to be bound by its terms.</p>
+              <div className="eula-actions">
+                <button className="secondary" onClick={() => getCurrentWindow().close()}>Decline & Exit</button>
+                <button className="primary" onClick={() => {
+                  localStorage.setItem('craftag-eula-accepted', 'true');
+                  setEulaAccepted(true);
+                }}>I Accept</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-root">
       {/* Titlebar */}
@@ -419,7 +453,7 @@ function App() {
             <h2>Queue ({files.length})</h2>
             <div className="sidebar-actions">
               <button className="icon-btn" onClick={handleOpenFiles} title="Open files" id="btn-open-files">
-                <UploadCloud size={15} />
+                <Upload size={15} />
               </button>
               <button className="icon-btn" onClick={handleOpenFolder} title="Open folder" id="btn-open-folder">
                 <FolderOpen size={15} />
@@ -647,7 +681,7 @@ function App() {
                 onKeyDown={e => e.key === 'Enter' && handleOpenFiles()}
                 aria-label="Open or drop audio files"
               >
-                <UploadCloud size={44} className="dropzone-icon" />
+                <Upload size={44} className="dropzone-icon" />
                 <h3>Drop Files/Folders or Click to Open Files</h3>
                 <p>MP3, WAV, FLAC, AAC and more</p>
               </div>
