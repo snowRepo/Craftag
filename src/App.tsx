@@ -24,6 +24,8 @@ interface AudioFile {
   disc: number | null;
   comments: string | null;
   has_art: boolean;
+  staged_art_path?: string | null;
+  staged_art_removed?: boolean;
 }
 
 interface BatchFields {
@@ -49,8 +51,6 @@ function App() {
   const [files, setFiles]             = useState<AudioFile[]>([]);
   const [activeFile, setActiveFile]   = useState<AudioFile | null>(null);
   const [albumArt, setAlbumArt]       = useState<string | null>(null);
-  const [stagedArtPath, setStagedArtPath] = useState<string | null>(null);
-  const [stagedArtRemoved, setStagedArtRemoved] = useState<boolean>(false);
   const [isSaving, setIsSaving]       = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -207,9 +207,12 @@ function App() {
   const handleSelectFile = async (file: AudioFile) => {
     setActiveFile(file);
     setAlbumArt(null);
-    setStagedArtPath(null);
-    setStagedArtRemoved(false);
-    if (file.has_art) {
+    if (file.staged_art_path) {
+      try {
+        const preview = await invoke<string>('read_image', { path: file.staged_art_path });
+        setAlbumArt(preview);
+      } catch { /* silent */ }
+    } else if (file.has_art && !file.staged_art_removed) {
       try {
         const art = await invoke<string | null>('get_album_art', { path: file.path });
         setAlbumArt(art);
@@ -269,17 +272,18 @@ function App() {
     setIsSaving(true);
     try {
       await invoke('save_audio_tags', { file: activeFile });
-      if (stagedArtPath) {
-        await invoke('set_album_art', { audioPath: activeFile.path, imagePath: stagedArtPath });
-      } else if (stagedArtRemoved) {
+      if (activeFile.staged_art_path) {
+        await invoke('set_album_art', { audioPath: activeFile.path, imagePath: activeFile.staged_art_path });
+      } else if (activeFile.staged_art_removed) {
         await invoke('remove_album_art', { audioPath: activeFile.path });
       }
-      setStagedArtPath(null);
-      setStagedArtRemoved(false);
+      const updated = { ...activeFile, staged_art_path: null, staged_art_removed: false };
+      setActiveFile(updated);
+      setFiles(prev => prev.map(f => f.path === updated.path ? updated : f));
       addToast('Tags saved.', 'success');
     } catch { addToast('Failed to save tags.', 'error'); }
     finally { setIsSaving(false); }
-  }, [activeFile, isSaving, stagedArtPath, stagedArtRemoved, addToast]);
+  }, [activeFile, isSaving, addToast]);
 
   useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
 
@@ -291,21 +295,19 @@ function App() {
     for (const file of files) {
       try { 
         await invoke('save_audio_tags', { file }); 
-        
-        // If this is the active file, commit its staged art
-        if (activeFile && file.path === activeFile.path) {
-          if (stagedArtPath) {
-            await invoke('set_album_art', { audioPath: file.path, imagePath: stagedArtPath });
-          } else if (stagedArtRemoved) {
-            await invoke('remove_album_art', { audioPath: file.path });
-          }
+        if (file.staged_art_path) {
+          await invoke('set_album_art', { audioPath: file.path, imagePath: file.staged_art_path });
+        } else if (file.staged_art_removed) {
+          await invoke('remove_album_art', { audioPath: file.path });
         }
         ok++; 
       }
       catch { fail++; }
     }
-    setStagedArtPath(null);
-    setStagedArtRemoved(false);
+    setFiles(prev => prev.map(f => ({ ...f, staged_art_path: null, staged_art_removed: false })));
+    if (activeFile) {
+      setActiveFile(prev => prev ? { ...prev, staged_art_path: null, staged_art_removed: false } : null);
+    }
     setIsSavingAll(false);
     fail === 0
       ? addToast(`All ${ok} files saved.`, 'success')
@@ -336,9 +338,7 @@ function App() {
       if (!selected || typeof selected !== 'string') return;
       const preview = await invoke<string>('read_image', { path: selected });
       setAlbumArt(preview);
-      setStagedArtPath(selected);
-      setStagedArtRemoved(false);
-      const updated = { ...activeFile, has_art: true };
+      const updated = { ...activeFile, has_art: true, staged_art_path: selected, staged_art_removed: false };
       setActiveFile(updated);
       setFiles(prev => prev.map(f => f.path === activeFile.path ? updated : f));
     } catch { addToast('Failed to load image preview.', 'error'); }
@@ -347,9 +347,7 @@ function App() {
   const handleRemoveArt = () => {
     if (!activeFile) return;
     setAlbumArt(null);
-    setStagedArtPath(null);
-    setStagedArtRemoved(true);
-    const updated = { ...activeFile, has_art: false };
+    const updated = { ...activeFile, has_art: false, staged_art_path: null, staged_art_removed: true };
     setActiveFile(updated);
     setFiles(prev => prev.map(f => f.path === activeFile.path ? updated : f));
   };
