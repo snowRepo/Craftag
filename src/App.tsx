@@ -46,6 +46,7 @@ interface Toast {
 }
 
 let toastCounter = 0;
+const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
 
 function App() {
   const [files, setFiles]             = useState<AudioFile[]>([]);
@@ -399,7 +400,7 @@ function App() {
     return (
       <div className="app-root eula-root">
         <div className="titlebar" data-tauri-drag-region>
-          <span className="titlebar-title">Craftag</span>
+          {!isWindows && <span className="titlebar-title">Craftag</span>}
         </div>
         <div className="eula-container">
           <div className="eula-modal animate-fade-in">
@@ -432,7 +433,7 @@ function App() {
     <div className="app-root">
       {/* Titlebar */}
       <div className="titlebar" data-tauri-drag-region>
-        <span className="titlebar-title">Craftag</span>
+        {!isWindows && <span className="titlebar-title">Craftag</span>}
         <button
           className="theme-toggle"
           style={{ marginLeft: 'auto' }}
@@ -692,8 +693,10 @@ function App() {
       <div className="toast-container" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type}`}>
-            {t.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
-            {t.message}
+            {t.type === 'success' 
+              ? <CheckCircle size={18} fill="var(--accent)" color="white" /> 
+              : <AlertCircle size={18} fill="var(--danger)" color="white" />}
+            <span>{t.message}</span>
           </div>
         ))}
       </div>

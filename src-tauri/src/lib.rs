@@ -153,8 +153,15 @@ fn save_audio_tags(file: AudioFile) -> Result<(), String> {
         if let Some(comments) = file.comments { tag.insert_text(ItemKey::Comment, comments); } else { tag.remove_key(ItemKey::Comment); }
     }
 
+    #[allow(unused_mut)]
+    let mut options = WriteOptions::default();
+    #[cfg(target_os = "windows")]
+    {
+        options = options.use_id3v23(true);
+    }
+
     tagged_file
-        .save_to_path(&file.path, WriteOptions::default())
+        .save_to_path(&file.path, options)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -202,8 +209,15 @@ fn set_album_art(audio_path: String, image_path: String) -> Result<(), String> {
         tag.push_picture(picture);
     }
 
+    #[allow(unused_mut)]
+    let mut options = WriteOptions::default();
+    #[cfg(target_os = "windows")]
+    {
+        options = options.use_id3v23(true);
+    }
+
     tagged_file
-        .save_to_path(&audio_path, WriteOptions::default())
+        .save_to_path(&audio_path, options)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -229,8 +243,15 @@ fn remove_album_art(audio_path: String) -> Result<(), String> {
         }
     }
 
+    #[allow(unused_mut)]
+    let mut options = WriteOptions::default();
+    #[cfg(target_os = "windows")]
+    {
+        options = options.use_id3v23(true);
+    }
+
     tagged_file
-        .save_to_path(&audio_path, WriteOptions::default())
+        .save_to_path(&audio_path, options)
         .map_err(|e| e.to_string())?;
 
     Ok(())
