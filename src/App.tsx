@@ -58,6 +58,7 @@ function App() {
   const [toasts, setToasts]           = useState<Toast[]>([]);
   const [darkMode, setDarkMode]       = useState(() => localStorage.getItem('craftag-theme') === 'dark');
   const [eulaAccepted, setEulaAccepted] = useState(() => localStorage.getItem('craftag-eula-accepted') === 'true');
+  const [isLoaded, setIsLoaded]       = useState(false);
 
   // Multi-select
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
@@ -100,21 +101,30 @@ function App() {
       try {
         const paths = JSON.parse(saved);
         if (Array.isArray(paths) && paths.length > 0) {
-          invoke<AudioFile[]>('read_audio_tags', { paths }).then(parsed => {
-            setFiles(parsed);
-          }).catch(err => console.error("Failed to restore queue", err));
+          invoke<AudioFile[]>('read_audio_tags', { paths })
+            .then(parsed => {
+              setFiles(prev => {
+                const existing = new Set(prev.map(f => f.path));
+                return [...prev, ...parsed.filter(f => !existing.has(f.path))];
+              });
+            })
+            .catch(err => console.error("Failed to restore queue", err))
+            .finally(() => setIsLoaded(true));
+          return;
         }
       } catch (e) {
         console.error("Failed to parse saved queue", e);
       }
     }
+    setIsLoaded(true);
   }, []);
 
   /* ── Save queue on change ───────────────────────────── */
   useEffect(() => {
+    if (!isLoaded) return;
     const paths = files.map(f => f.path);
     localStorage.setItem('craftag-queue', JSON.stringify(paths));
-  }, [files]);
+  }, [files, isLoaded]);
 
   /* ── Pre-populate batch fields when selection changes ── */
   useEffect(() => {

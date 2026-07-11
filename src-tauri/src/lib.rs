@@ -75,205 +75,217 @@ fn parse_file(path: &Path) -> Result<AudioFile, String> {
 }
 
 #[tauri::command]
-fn read_audio_tags(paths: Vec<String>) -> Result<Vec<AudioFile>, String> {
-    let mut results = Vec::new();
+async fn read_audio_tags(paths: Vec<String>) -> Result<Vec<AudioFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut results = Vec::new();
 
-    for path_str in paths {
-        let path = Path::new(&path_str);
-        if path.is_dir() {
-            for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                let p = entry.path();
-                if p.is_file() {
-                    if let Ok(audio_file) = parse_file(p) {
-                        results.push(audio_file);
+        for path_str in paths {
+            let path = Path::new(&path_str);
+            if path.is_dir() {
+                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if p.is_file() {
+                        if let Ok(audio_file) = parse_file(p) {
+                            results.push(audio_file);
+                        }
                     }
                 }
-            }
-        } else if path.is_file() {
-            if let Ok(audio_file) = parse_file(path) {
-                results.push(audio_file);
+            } else if path.is_file() {
+                if let Ok(audio_file) = parse_file(path) {
+                    results.push(audio_file);
+                }
             }
         }
-    }
 
-    Ok(results)
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn get_album_art(path: String) -> Result<Option<String>, String> {
-    let tagged_file = Probe::open(&path)
-        .map_err(|e| e.to_string())?
-        .read()
-        .map_err(|e| e.to_string())?;
+async fn get_album_art(path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let tagged_file = Probe::open(&path)
+            .map_err(|e| e.to_string())?
+            .read()
+            .map_err(|e| e.to_string())?;
 
-    let tag = match tagged_file.primary_tag() {
-        Some(primary_tag) => Some(primary_tag),
-        None => tagged_file.first_tag(),
-    };
+        let tag = match tagged_file.primary_tag() {
+            Some(primary_tag) => Some(primary_tag),
+            None => tagged_file.first_tag(),
+        };
 
-    if let Some(t) = tag {
-        if let Some(pic) = t.pictures().first() {
-            let data = pic.data();
-            let mime = pic.mime_type().map(|m| m.as_str()).unwrap_or("image/jpeg");
-            let b64 = BASE64_STANDARD.encode(data);
-            return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+        if let Some(t) = tag {
+            if let Some(pic) = t.pictures().first() {
+                let data = pic.data();
+                let mime = pic.mime_type().map(|m| m.as_str()).unwrap_or("image/jpeg");
+                let b64 = BASE64_STANDARD.encode(data);
+                return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+            }
         }
-    }
-    Ok(None)
+        Ok(None)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn save_audio_tags(file: AudioFile) -> Result<(), String> {
-    let mut tagged_file = Probe::open(&file.path)
-        .map_err(|e| e.to_string())?
-        .read()
-        .map_err(|e| e.to_string())?;
+async fn save_audio_tags(file: AudioFile) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut tagged_file = Probe::open(&file.path)
+            .map_err(|e| e.to_string())?
+            .read()
+            .map_err(|e| e.to_string())?;
 
-    let tag_type = tagged_file.primary_tag_type();
+        let tag_type = tagged_file.primary_tag_type();
 
-    // Ensure there is a tag we can write to.
-    if tagged_file.primary_tag().is_none() {
-        tagged_file.insert_tag(Tag::new(tag_type));
-    }
-
-    if let Some(tag) = tagged_file.primary_tag_mut() {
-        if let Some(title) = file.title { tag.set_title(title); } else { tag.remove_title(); }
-        if let Some(artist) = file.artist { tag.set_artist(artist); } else { tag.remove_artist(); }
-        if let Some(album) = file.album { tag.set_album(album); } else { tag.remove_album(); }
-        if let Some(year) = file.year {
-            tag.insert_text(ItemKey::Year, year.to_string());
-        } else {
-            tag.remove_key(ItemKey::Year);
+        // Ensure there is a tag we can write to.
+        if tagged_file.primary_tag().is_none() {
+            tagged_file.insert_tag(Tag::new(tag_type));
         }
-        if let Some(genre) = file.genre { tag.set_genre(genre); } else { tag.remove_genre(); }
-        if let Some(track) = file.track { tag.set_track(track); } else { tag.remove_track(); }
-        if let Some(album_artist) = file.album_artist { tag.insert_text(ItemKey::AlbumArtist, album_artist); } else { tag.remove_key(ItemKey::AlbumArtist); }
-        if let Some(composer) = file.composer { tag.insert_text(ItemKey::Composer, composer); } else { tag.remove_key(ItemKey::Composer); }
-        if let Some(disc) = file.disc { tag.set_disk(disc); } else { tag.remove_disk(); }
-        if let Some(comments) = file.comments { tag.insert_text(ItemKey::Comment, comments); } else { tag.remove_key(ItemKey::Comment); }
-    }
 
-    #[allow(unused_mut)]
-    let mut options = WriteOptions::default();
-    #[cfg(target_os = "windows")]
-    {
-        options = options.use_id3v23(true);
-    }
+        if let Some(tag) = tagged_file.primary_tag_mut() {
+            if let Some(title) = file.title { tag.set_title(title); } else { tag.remove_title(); }
+            if let Some(artist) = file.artist { tag.set_artist(artist); } else { tag.remove_artist(); }
+            if let Some(album) = file.album { tag.set_album(album); } else { tag.remove_album(); }
+            if let Some(year) = file.year {
+                tag.insert_text(ItemKey::Year, year.to_string());
+            } else {
+                tag.remove_key(ItemKey::Year);
+            }
+            if let Some(genre) = file.genre { tag.set_genre(genre); } else { tag.remove_genre(); }
+            if let Some(track) = file.track { tag.set_track(track); } else { tag.remove_track(); }
+            if let Some(album_artist) = file.album_artist { tag.insert_text(ItemKey::AlbumArtist, album_artist); } else { tag.remove_key(ItemKey::AlbumArtist); }
+            if let Some(composer) = file.composer { tag.insert_text(ItemKey::Composer, composer); } else { tag.remove_key(ItemKey::Composer); }
+            if let Some(disc) = file.disc { tag.set_disk(disc); } else { tag.remove_disk(); }
+            if let Some(comments) = file.comments { tag.insert_text(ItemKey::Comment, comments); } else { tag.remove_key(ItemKey::Comment); }
+        }
 
-    tagged_file
-        .save_to_path(&file.path, options)
-        .map_err(|e| e.to_string())?;
+        #[allow(unused_mut)]
+        let mut options = WriteOptions::default();
+        #[cfg(target_os = "windows")]
+        {
+            options = options.use_id3v23(true);
+        }
 
-    Ok(())
+        tagged_file
+            .save_to_path(&file.path, options)
+            .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// Embeds an image file into an audio file's tag as front cover art.
 /// Works cross-platform — `image_path` is an absolute path to any JPEG/PNG.
 #[tauri::command]
-fn set_album_art(audio_path: String, image_path: String) -> Result<(), String> {
-    let img_bytes = std::fs::read(&image_path).map_err(|e| e.to_string())?;
+async fn set_album_art(audio_path: String, image_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let img_bytes = std::fs::read(&image_path).map_err(|e| e.to_string())?;
 
-    // Detect MIME type from extension
-    let ext = Path::new(&image_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+        // Detect MIME type from extension
+        let ext = Path::new(&image_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
-    let mime = match ext.as_str() {
-        "jpg" | "jpeg" => MimeType::Jpeg,
-        "png"          => MimeType::Png,
-        "gif"          => MimeType::Gif,
-        "bmp"          => MimeType::Bmp,
-        _              => MimeType::Jpeg, // sensible fallback
-    };
+        let mime = match ext.as_str() {
+            "jpg" | "jpeg" => MimeType::Jpeg,
+            "png"          => MimeType::Png,
+            "gif"          => MimeType::Gif,
+            "bmp"          => MimeType::Bmp,
+            _              => MimeType::Jpeg, // sensible fallback
+        };
 
-    let picture = Picture::unchecked(img_bytes)
-        .pic_type(PictureType::CoverFront)
-        .mime_type(mime)
-        .build();
+        let picture = Picture::unchecked(img_bytes)
+            .pic_type(PictureType::CoverFront)
+            .mime_type(mime)
+            .build();
 
-    let mut tagged_file = Probe::open(&audio_path)
-        .map_err(|e| e.to_string())?
-        .read()
-        .map_err(|e| e.to_string())?;
+        let mut tagged_file = Probe::open(&audio_path)
+            .map_err(|e| e.to_string())?
+            .read()
+            .map_err(|e| e.to_string())?;
 
-    let tag_type = tagged_file.primary_tag_type();
-    if tagged_file.primary_tag().is_none() {
-        tagged_file.insert_tag(Tag::new(tag_type));
-    }
+        let tag_type = tagged_file.primary_tag_type();
+        if tagged_file.primary_tag().is_none() {
+            tagged_file.insert_tag(Tag::new(tag_type));
+        }
 
-    if let Some(tag) = tagged_file.primary_tag_mut() {
-        // Remove existing cover art before inserting the new one
-        tag.remove_picture_type(PictureType::CoverFront);
-        tag.push_picture(picture);
-    }
+        if let Some(tag) = tagged_file.primary_tag_mut() {
+            // Remove existing cover art before inserting the new one
+            tag.remove_picture_type(PictureType::CoverFront);
+            tag.push_picture(picture);
+        }
 
-    #[allow(unused_mut)]
-    let mut options = WriteOptions::default();
-    #[cfg(target_os = "windows")]
-    {
-        options = options.use_id3v23(true);
-    }
+        #[allow(unused_mut)]
+        let mut options = WriteOptions::default();
+        #[cfg(target_os = "windows")]
+        {
+            options = options.use_id3v23(true);
+        }
 
-    tagged_file
-        .save_to_path(&audio_path, options)
-        .map_err(|e| e.to_string())?;
+        tagged_file
+            .save_to_path(&audio_path, options)
+            .map_err(|e| e.to_string())?;
 
-    Ok(())
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// Strips all embedded pictures from an audio file's tag.
 #[tauri::command]
-fn remove_album_art(audio_path: String) -> Result<(), String> {
-    let mut tagged_file = Probe::open(&audio_path)
-        .map_err(|e| e.to_string())?
-        .read()
-        .map_err(|e| e.to_string())?;
+async fn remove_album_art(audio_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut tagged_file = Probe::open(&audio_path)
+            .map_err(|e| e.to_string())?
+            .read()
+            .map_err(|e| e.to_string())?;
 
-    if let Some(tag) = tagged_file.primary_tag_mut() {
-        // Remove all known picture types
-        for pic_type in [
-            PictureType::CoverFront,
-            PictureType::CoverBack,
-            PictureType::Other,
-            PictureType::OtherIcon,
-        ] {
-            tag.remove_picture_type(pic_type);
+        if let Some(tag) = tagged_file.primary_tag_mut() {
+            // Remove all known picture types
+            for pic_type in [
+                PictureType::CoverFront,
+                PictureType::CoverBack,
+                PictureType::Other,
+                PictureType::OtherIcon,
+            ] {
+                tag.remove_picture_type(pic_type);
+            }
         }
-    }
 
-    #[allow(unused_mut)]
-    let mut options = WriteOptions::default();
-    #[cfg(target_os = "windows")]
-    {
-        options = options.use_id3v23(true);
-    }
+        #[allow(unused_mut)]
+        let mut options = WriteOptions::default();
+        #[cfg(target_os = "windows")]
+        {
+            options = options.use_id3v23(true);
+        }
 
-    tagged_file
-        .save_to_path(&audio_path, options)
-        .map_err(|e| e.to_string())?;
+        tagged_file
+            .save_to_path(&audio_path, options)
+            .map_err(|e| e.to_string())?;
 
-    Ok(())
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// Reads an image file and returns it as a base64 data URL for preview.
 #[tauri::command]
-fn read_image(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let ext = Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let mime = match ext.as_str() {
-        "png"  => "image/png",
-        "gif"  => "image/gif",
-        "bmp"  => "image/bmp",
-        "webp" => "image/webp",
-        _      => "image/jpeg",
-    };
-    Ok(format!("data:{};base64,{}", mime, BASE64_STANDARD.encode(&bytes)))
+async fn read_image(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let ext = Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let mime = match ext.as_str() {
+            "png"  => "image/png",
+            "gif"  => "image/gif",
+            "bmp"  => "image/bmp",
+            "webp" => "image/webp",
+            _      => "image/jpeg",
+        };
+        Ok(format!("data:{};base64,{}", mime, BASE64_STANDARD.encode(&bytes)))
+    }).await.map_err(|e| e.to_string())?
 }
 
 
