@@ -6,49 +6,41 @@ on:
       - 'v*'
 
 jobs:
-  publish-tauri:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-          - platform: 'windows-latest'
-            args: ''
-
-    runs-on: ${{ matrix.platform }}
+  test:
+    name: Smoke test
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: setup node
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 20
+          python-version: '3.12'
 
-      - name: install frontend dependencies
-        run: npm install
+      - name: Install dependencies
+        run: pip install -r craftag_py/requirements.txt
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Import check
+        run: python -c "from craftag_py.core.tag_io import read_tag; print('OK')"
+
+  release:
+    name: Create GitHub Release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create release archive
+        run: |
+          zip -r Craftag-${{ github.ref_name }}.zip craftag_py logo.png README.md run.sh \
+            --exclude "*.pyc" --exclude "*/__pycache__/*"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: app-v__VERSION__
-          releaseName: 'Craftag v__VERSION__'
-          releaseBody: 'See the attached assets to download and install this version.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+          name: "Craftag ${{ github.ref_name }}"
+          body: "See the attached zip to run this version."
+          draft: true
+          files: Craftag-${{ github.ref_name }}.zip
