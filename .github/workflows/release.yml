@@ -5,9 +5,20 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-mac:
-    runs-on: macos-latest
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            arch: AppleSilicon
+          - os: macos-13
+            arch: Intel
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -20,8 +31,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
 
       - name: Build macOS App
         run: |
@@ -38,7 +50,7 @@ jobs:
             --icon "Craftag.app" 175 190 \
             --hide-extension "Craftag.app" \
             --app-drop-link 425 190 \
-            "Craftag-macOS.dmg" \
+            "Craftag-macOS-${{ matrix.arch }}.dmg" \
             "dist/Craftag.app/"
 
       - name: Upload macOS Release
@@ -46,7 +58,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: Craftag-macOS.dmg
+          files: Craftag-macOS-${{ matrix.arch }}.dmg
 
   build-windows:
     runs-on: windows-latest
@@ -62,8 +74,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
 
       - name: Build Windows Executable
         run: |
