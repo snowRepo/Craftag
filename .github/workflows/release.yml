@@ -32,7 +32,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r craftag_py/requirements.txt
           python -m pip install pyinstaller
 
       - name: Build macOS App
@@ -66,7 +66,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r craftag_py/requirements.txt
           python -m pip install pyinstaller
 
       - name: Build Windows Executable
