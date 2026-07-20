@@ -18,13 +18,14 @@ import mutagen
 from mutagen.id3 import (
     ID3, ID3NoHeaderError,
     TIT2, TPE1, TALB, TPE2, TCOM, TCON, TDRC, TRCK, TPOS, COMM,
-    APIC,
+    APIC, TBPM, USLT, POPM,
 )
 from mutagen.flac import FLAC, Picture as FLACPicture
 from mutagen.mp4 import MP4, MP4Cover
 from mutagen.oggvorbis import OggVorbis
 from mutagen.oggopus import OggOpus
 from mutagen.wavpack import WavPack
+from mutagen.apev2 import APEv2, APETextValue
 from mutagen.wave import WAVE
 from mutagen.aiff import AIFF
 
@@ -52,7 +53,11 @@ class AudioTag:
     track: Optional[str] = None
     disc: Optional[str] = None
     comments: Optional[str] = None
+    bpm: Optional[str] = None
+    lyrics: Optional[str] = None
+    rating: int = 0
     has_art: bool = False
+    is_dirty: bool = False
     # In-memory staged art (bytes) — not persisted until save()
     _staged_art: Optional[bytes] = field(default=None, repr=False)
     _staged_art_mime: Optional[str] = field(default=None, repr=False)
@@ -71,6 +76,30 @@ def _str(v) -> Optional[str]:
         return None
     s = str(v).strip()
     return s if s else None
+
+
+def _popm_to_stars(val: int) -> int:
+    """Convert an ID3 POPM value (0-255) to a 0-5 star rating."""
+    if not val: return 0
+    if val >= 200: return 5
+    if val >= 150: return 4
+    if val >= 100: return 3
+    if val >= 50: return 2
+    return 1
+
+def _stars_to_popm(val: int) -> int:
+    """Convert a 0-5 star rating to an ID3 POPM value (0-255).
+    Follows Windows Explorer standard mapping."""
+    m = {0: 0, 1: 1, 2: 64, 3: 128, 4: 196, 5: 255}
+    return m.get(val, 0)
+
+
+def _norm_path(path: str) -> str:
+    """Return a normalised path: resolves `.`, `..`, double slashes, and
+    trailing separators.  Works identically on Windows, macOS, and Linux.
+    The display casing of the original path is preserved (normcase is
+    applied only at comparison time in file_list.py)."""
+    return os.path.normpath(path)
 
 
 def _ext(path: str) -> str:
@@ -100,6 +129,18 @@ def _read_id3(path: str) -> AudioTag:
                 return _str(v.text[0]) if v.text else None
         return None
 
+    def get_lyrics():
+        for k, v in tags.items():
+            if k.startswith("USLT"):
+                return _str(v.text)
+        return None
+
+    def get_rating():
+        for k, v in tags.items():
+            if k.startswith("POPM"):
+                return _popm_to_stars(v.rating)
+        return 0
+
     return AudioTag(
         path=path,
         filename=os.path.basename(path),
@@ -113,6 +154,9 @@ def _read_id3(path: str) -> AudioTag:
         track=get("TRCK"),
         disc=get("TPOS"),
         comments=get_comm(),
+        bpm=get("TBPM"),
+        lyrics=get_lyrics(),
+        rating=get_rating(),
         has_art=has_art,
     )
 
@@ -138,6 +182,9 @@ def _read_flac(path: str) -> AudioTag:
         track=get("tracknumber"),
         disc=get("discnumber"),
         comments=get("comment"),
+        bpm=get("bpm"),
+        lyrics=get("lyrics") or get("unsyncedlyrics"),
+        rating=int(get("rating") or 0) if str(get("rating") or "").isdigit() else 0,
         has_art=bool(audio.pictures),
     )
 
@@ -171,6 +218,14 @@ def _read_mp4(path: str) -> AudioTag:
                 return str(d[0]) if d[0] else None
         return None
 
+    def get_bpm():
+        vals = tags.get("tmpo")
+        if vals:
+            t = vals[0]
+            if isinstance(t, tuple) or isinstance(t, int):
+                return str(t) if isinstance(t, int) else str(t[0])
+        return None
+
     return AudioTag(
         path=path,
         filename=os.path.basename(path),
@@ -184,6 +239,9 @@ def _read_mp4(path: str) -> AudioTag:
         track=get_track(),
         disc=get_disc(),
         comments=get("\xa9cmt"),
+        bpm=get_bpm(),
+        lyrics=get("\xa9lyr"),
+        rating=int(get("rate") or 0) if str(get("rate") or "").isdigit() else 0,
         has_art=bool(tags.get("covr")),
     )
 
@@ -214,6 +272,9 @@ def _read_vorbis(path: str, cls) -> AudioTag:
         track=get("tracknumber"),
         disc=get("discnumber"),
         comments=get("comment"),
+        bpm=get("bpm"),
+        lyrics=get("lyrics") or get("unsyncedlyrics"),
+        rating=int(get("rating") or 0) if str(get("rating") or "").isdigit() else 0,
         has_art=has_art,
     )
 
@@ -234,6 +295,7 @@ _FORMAT_READERS = {
 
 def read_tag(path: str) -> Optional[AudioTag]:
     """Read tags from any supported audio file. Returns None on failure."""
+    path = _norm_path(path)   # normalise once; stored path is always clean
     ext = _ext(path)
     reader = _FORMAT_READERS.get(ext)
     if reader is None:
@@ -247,6 +309,7 @@ def read_tag(path: str) -> Optional[AudioTag]:
 
 def read_folder(folder: str) -> list[AudioTag]:
     """Recursively walk folder and read all supported audio files."""
+    folder = _norm_path(folder)
     results = []
     for root, _, files in os.walk(folder):
         for fname in sorted(files):
@@ -317,6 +380,7 @@ def _write_id3(tag: AudioTag):
     set_text(TDRC, "TDRC", tag.year)
     set_text(TRCK, "TRCK", tag.track)
     set_text(TPOS, "TPOS", tag.disc)
+    set_text(TBPM, "TBPM", tag.bpm)
 
     # Comments
     for k in list(tags.keys()):
@@ -324,6 +388,21 @@ def _write_id3(tag: AudioTag):
             del tags[k]
     if tag.comments:
         tags["COMM::eng"] = COMM(encoding=3, lang="eng", desc="", text=[tag.comments])
+
+    # Lyrics
+    for k in list(tags.keys()):
+        if k.startswith("USLT"):
+            del tags[k]
+    if tag.lyrics:
+        tags["USLT::eng"] = USLT(encoding=3, lang="eng", desc="", text=tag.lyrics)
+
+    # Rating
+    for k in list(tags.keys()):
+        if k.startswith("POPM"):
+            del tags[k]
+    if tag.rating > 0:
+        val = _stars_to_popm(tag.rating)
+        tags["POPM:Craftag"] = POPM(email="Craftag", rating=val)
 
     # Art
     if tag._staged_art_removed:
@@ -342,7 +421,13 @@ def _write_id3(tag: AudioTag):
             data=tag._staged_art,
         )
 
-    # Always save as ID3v2.3 for maximum compatibility (Windows WMP, etc.)
+    # Always save as ID3v2.3 for maximum compatibility.
+    # Rationale:
+    #   - Windows Media Player (all versions) requires ID3v2.3
+    #   - iTunes / Apple Music had longstanding issues with ID3v2.4
+    #   - Most hardware players (car stereos, portables) support only v2.3
+    #   - v2.4 offers little practical benefit for the tags we expose
+    # DO NOT change this to v2_version=4 — it will break WMP on Windows.
     tags.save(tag.path, v2_version=3)
 
 
@@ -368,6 +453,9 @@ def _write_flac(tag: AudioTag):
     set_tag("tracknumber", tag.track)
     set_tag("discnumber", tag.disc)
     set_tag("comment", tag.comments)
+    set_tag("bpm", tag.bpm)
+    set_tag("lyrics", tag.lyrics)
+    set_tag("rating", str(tag.rating) if tag.rating > 0 else None)
 
     # Art
     if tag._staged_art_removed:
@@ -404,6 +492,16 @@ def _write_mp4(tag: AudioTag):
     set_tag("\xa9gen", tag.genre)
     set_tag("\xa9day", tag.year)
     set_tag("\xa9cmt", tag.comments)
+    set_tag("\xa9lyr", tag.lyrics)
+    set_tag("rate", str(tag.rating) if tag.rating > 0 else None)
+
+    if tag.bpm:
+        try:
+            t["tmpo"] = [int(tag.bpm)]
+        except ValueError:
+            pass
+    elif "tmpo" in t:
+        del t["tmpo"]
 
     # Track & disc need tuple format
     if tag.track:
@@ -457,6 +555,9 @@ def _write_vorbis(tag: AudioTag, cls):
     set_tag("tracknumber", tag.track)
     set_tag("discnumber", tag.disc)
     set_tag("comment", tag.comments)
+    set_tag("bpm", tag.bpm)
+    set_tag("lyrics", tag.lyrics)
+    set_tag("rating", str(tag.rating) if tag.rating > 0 else None)
 
     # Art via METADATA_BLOCK_PICTURE
     for k in list(t.keys()):
@@ -478,6 +579,42 @@ def _write_vorbis(tag: AudioTag, cls):
     audio.save()
 
 
+def _write_wavpack(tag: AudioTag):
+    """Write tags to a WavPack file using APEv2 tags."""
+    try:
+        apev2 = APEv2(tag.path)
+    except Exception:
+        apev2 = APEv2()
+
+    # Map AudioTag fields to APEv2 key names
+    field_map = [
+        ("Title",       tag.title),
+        ("Artist",      tag.artist),
+        ("Album",       tag.album),
+        ("Album Artist",tag.album_artist),
+        ("Composer",    tag.composer),
+        ("Genre",       tag.genre),
+        ("Year",        tag.year),
+        ("Track",       tag.track),
+        ("Disc",        tag.disc),
+        ("Comment",     tag.comments),
+        ("BPM",         tag.bpm),
+        ("Lyrics",      tag.lyrics),
+        ("Rating",      str(tag.rating) if tag.rating > 0 else None)
+    ]
+    for key, val in field_map:
+        if val:
+            apev2[key] = APETextValue(val, 0)  # kind=0 → UTF-8 text
+        elif key in apev2:
+            del apev2[key]
+
+    # WavPack / APEv2 does not support embedded art in a standard way;
+    # mutagen's APEv2 does support binary items but players vary widely.
+    # We skip art for .wv to avoid corrupting files.
+
+    apev2.save(tag.path)
+
+
 _FORMAT_WRITERS = {
     ".mp3": _write_id3,
     ".wav": _write_id3,
@@ -489,6 +626,7 @@ _FORMAT_WRITERS = {
     ".mp4": _write_mp4,
     ".ogg": lambda tag: _write_vorbis(tag, OggVorbis),
     ".opus": lambda tag: _write_vorbis(tag, OggOpus),
+    ".wv": _write_wavpack,
 }
 
 

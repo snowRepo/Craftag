@@ -1,4 +1,4 @@
-name: "Release Craftag"
+name: Build Releases
 
 on:
   push:
@@ -6,41 +6,72 @@ on:
       - 'v*'
 
 jobs:
-  test:
-    name: Smoke test
+  build-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dependencies
-        run: pip install -r craftag_py/requirements.txt
-
-      - name: Import check
-        run: python -c "from craftag_py.core.tag_io import read_tag; print('OK')"
-
-  release:
-    name: Create GitHub Release
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create release archive
+      - name: Install Dependencies
         run: |
-          zip -r Craftag-${{ github.ref_name }}.zip craftag_py logo.png README.md run.sh \
-            --exclude "*.pyc" --exclude "*/__pycache__/*"
+          pip install -r requirements.txt
+          pip install pyinstaller
 
-      - name: Publish release
+      - name: Build macOS App
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --name "Craftag" craftag_py/main.py
+
+      - name: Create DMG Installer
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "Craftag Installer" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "Craftag.app" 175 190 \
+            --hide-extension "Craftag.app" \
+            --app-drop-link 425 190 \
+            "Craftag-macOS.dmg" \
+            "dist/Craftag.app/"
+
+      - name: Upload macOS Release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: "Craftag ${{ github.ref_name }}"
-          body: "See the attached zip to run this version."
-          draft: true
-          files: Craftag-${{ github.ref_name }}.zip
+          files: Craftag-macOS.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows Executable
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --icon "logo.ico" --name "Craftag" craftag_py/main.py
+
+      - name: Upload Windows Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: dist/Craftag.exe

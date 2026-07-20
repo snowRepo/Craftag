@@ -1,4 +1,4 @@
-END USER LICENSE AGREEMENT (EULA) for Craftag
+END USER LICENSE AGREEMENT
 
 IMPORTANT – READ CAREFULLY: This End User License Agreement ("EULA") is a legal agreement between you (either an individual or a single entity) and the creator of Craftag. By installing, copying, or otherwise using Craftag, you agree to be bound by the terms of this EULA. If you do not agree to the terms of this EULA, do not install or use the software.
 
@@ -19,4 +19,4 @@ Craftag is provided "As Is" and without any warranty of any kind. The creator ex
 5. LIMITATION OF LIABILITY.
 In no event shall the creator of Craftag be liable for any special, incidental, indirect, or consequential damages whatsoever (including, without limitation, damages for loss of business profits, business interruption, loss of business information, or any other pecuniary loss) arising out of the use of or inability to use the software.
 
-By clicking "Accept" or continuing with the installation, you acknowledge that you have read this EULA, understand it, and agree to be bound by its terms.
+By clicking "Accept" you acknowledge that you have read this EULA, understand it, and agree to be bound by its terms.

@@ -7,10 +7,13 @@ import os
 
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QStatusBar, QFileDialog,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QApplication,
+    QProgressBar, QMessageBox
 )
-from PySide6.QtCore import Qt, QThread, QObject, Signal
-from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent
+from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings, QTimer
+from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent, QPixmap, QKeySequence, QShortcut, QAction, QGuiApplication
 
+from craftag_py.__version__ import VERSION
 from craftag_py.core.tag_io import AudioTag, read_tag, read_folder, save_tag
 from craftag_py.ui.file_list import FileListPanel
 from craftag_py.ui.editor_panel import EditorPanel
@@ -45,16 +48,228 @@ class LoadWorker(QObject):
             self.finished.emit()
 
 
+# ── Background saver ──────────────────────────────────────────────────────
+
+class SaveWorker(QObject):
+    """Saves a list of AudioTag objects on a background thread.
+
+    IMPORTANT: This worker must NOT mutate any AudioTag fields.
+    AudioTag objects are shared with the main thread; mutating them
+    from a background thread causes data races and crashes.
+    Instead we collect the successfully-saved tags and send them back
+    to the main thread via the `finished` signal, where the main thread
+    can safely reset their dirty state.
+    """
+    progress  = Signal(int, int)   # (done_count, total)
+    finished  = Signal(list, int)  # (saved_tags: list[AudioTag], fail_count)
+
+    def __init__(self, tags: list[AudioTag]):
+        super().__init__()
+        self._tags = tags
+
+    def run(self):
+        saved_tags = []
+        fail = 0
+        total = len(self._tags)
+        for i, tag in enumerate(self._tags, 1):
+            try:
+                save_tag(tag)
+                saved_tags.append(tag)
+            except Exception as e:
+                print(f"[SaveWorker] {tag.path}: {e}")
+                fail += 1
+            # NOTE: progress is connected with QueuedConnection so this
+            # emit is safe to call from the worker thread — PySide6 will
+            # marshal it onto the main thread before executing the slot.
+            self.progress.emit(i, total)
+        # finished is also QueuedConnection; _on_save_all_done runs on main thread.
+        self.finished.emit(saved_tags, fail)
+
+
+# ── Update checker ─────────────────────────────────────────────────────────────
+
+class UpdateWorker(QObject):
+    """Fetches the published version.json and compares it to the running version.
+
+    Emits exactly one signal:
+      up_to_date()                       — already on latest
+      update_available(latest, dl_url)   — newer version exists
+      error(msg)                         — network / parse failure
+    """
+    up_to_date       = Signal()
+    update_available = Signal(str, str)   # (latest_version, download_url)
+    error            = Signal(str)
+
+    _VERSION_URL = (
+        "https://raw.githubusercontent.com/snowRepo/Craftag/main/version.json"
+    )
+
+    def run(self):
+        try:
+            import json
+            import urllib.request
+            import ssl
+            from craftag_py.__version__ import VERSION
+
+            # Allow fetching over HTTPS seamlessly
+            ctx = ssl.create_default_context()
+            
+            req = urllib.request.Request(self._VERSION_URL, headers={"User-Agent": f"Craftag/{VERSION}"})
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+                raw_data = resp.read()
+                
+            data = json.loads(raw_data)
+
+            latest = data.get("version", "").strip()
+            dl_url = data.get("download_url", "https://devapps-online.vercel.app")
+
+            if latest and latest != VERSION:
+                self.update_available.emit(latest, dl_url)
+            else:
+                self.up_to_date.emit()
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class AboutDialog(QDialog):
+    def __init__(self, parent=None, dark=False, startup_mode=False):
+        super().__init__(parent)
+        self.setWindowTitle("Craftag EULA" if startup_mode else "About Craftag")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Header (Logo + Title)
+        header_layout = QHBoxLayout()
+        header_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        logo_lbl = QLabel()
+        icon_path = os.path.join(os.path.dirname(__file__), "..", "..", "logo.png")
+        if os.path.exists(icon_path):
+            pixmap = QPixmap(icon_path)
+            logo_lbl.setPixmap(pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        header_layout.addWidget(logo_lbl)
+        
+        title_layout = QVBoxLayout()
+        title_layout.setSpacing(2)
+        title_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        title_lbl = QLabel("Craftag")
+        title_lbl.setStyleSheet("font-size: 24px; font-weight: bold;")
+        title_layout.addWidget(title_lbl)
+        version_lbl = QLabel(f"Version {VERSION}")
+        title_layout.addWidget(version_lbl)
+        header_layout.addLayout(title_layout)
+        header_layout.addStretch()
+        
+        layout.addLayout(header_layout)
+        
+        if startup_mode:
+            # Startup mode: show full EULA
+            self.setFixedSize(540, 560)
+            
+            # EULA text
+            self.text_edit = QTextEdit()
+            self.text_edit.setReadOnly(True)
+            license_path = os.path.join(os.path.dirname(__file__), "..", "..", "license.txt")
+            if os.path.exists(license_path):
+                with open(license_path, "r", encoding="utf-8") as f:
+                    self.text_edit.setPlainText(f.read())
+            else:
+                self.text_edit.setPlainText("End User License Agreement (EULA) not found.")
+                
+            layout.addWidget(self.text_edit)
+        else:
+            # About mode: compact about pane
+            self.setFixedSize(360, 240)
+            
+            # Spacer
+            layout.addSpacing(8)
+            
+            # Description
+            desc_lbl = QLabel("A simple, cross-platform audio tag editor.")
+            desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            desc_lbl.setWordWrap(True)
+            layout.addWidget(desc_lbl)
+            
+            # Spacer
+            layout.addSpacing(12)
+            
+            # Copyright
+            copyright_lbl = QLabel("© 2026 Craftag\nAll rights reserved.")
+            copyright_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            copyright_color = "#666666" if dark else "#888888"
+            copyright_lbl.setStyleSheet(f"font-size: 11px; color: {copyright_color};")
+            layout.addWidget(copyright_lbl)
+            
+            layout.addStretch()
+        
+        if startup_mode:
+            # Buttons for the EULA modal only.
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+
+            decline_btn = QPushButton("Decline")
+            decline_btn.setFixedSize(100, 32)
+            decline_btn.setObjectName("declineBtn")
+            decline_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(decline_btn)
+            
+            agree_btn = QPushButton("Agree")
+            agree_btn.setFixedSize(100, 32)
+            agree_btn.clicked.connect(self.accept)
+            btn_layout.addWidget(agree_btn)
+            
+            layout.addLayout(btn_layout)
+        
+        bg = "#1e1e1e" if dark else "#ffffff"
+        text = "#ffffff" if dark else "#000000"
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {bg}; color: {text}; }}
+            QLabel {{ color: {text}; }}
+            QTextEdit {{
+                background-color: {"#2d2d2d" if dark else "#f5f5f5"};
+                color: {text};
+                border: 1px solid {"#444" if dark else "#ccc"};
+                border-radius: 6px;
+                padding: 12px;
+            }}
+            QPushButton {{
+                background-color: {"#333333" if dark else "#e5e5e5"};
+                color: {text};
+                border-radius: 6px;
+                border: 1px solid {"#444444" if dark else "#cccccc"};
+            }}
+            QPushButton:hover {{
+                background-color: {"#444444" if dark else "#d4d4d4"};
+            }}
+            QPushButton#declineBtn {{
+                background-color: transparent;
+                color: {text};
+                border: 1px solid {"#444" if dark else "#ccc"};
+            }}
+            QPushButton#declineBtn:hover {{
+                background-color: {"#333" if dark else "#eee"};
+            }}
+        """)
+
 # ── Main Window ────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Craftag")
+        # On macOS the menu bar already shows the app name; an empty window title
+        # gives a cleaner look and lets us use it purely for track context.
+        # On Windows/Linux we keep "Craftag" so the taskbar is always labelled.
+        import sys
+        if sys.platform != "darwin":
+            self.setWindowTitle("Craftag")
+        else:
+            self.setWindowTitle("")
         self.setMinimumSize(820, 540)
         self.resize(1060, 660)
         self.setAcceptDrops(True)
-        self._dark = True
+        self._dark = False
 
         icon_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "logo.png"
@@ -63,7 +278,22 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
 
         self._build_ui()
-        self._apply_stylesheet()
+        self._sync_system_theme()
+
+        # React to live system appearance changes (macOS dark/light toggle)
+        hints = QGuiApplication.styleHints()
+        hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
+
+        QTimer.singleShot(0, self._check_eula)
+
+    def _check_eula(self):
+        settings = QSettings("DevApps", "Craftag")
+        if not settings.value("eula_agreed", False, type=bool):
+            dlg = AboutDialog(self, dark=self._dark, startup_mode=True)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                settings.setValue("eula_agreed", True)
+            else:
+                QApplication.quit()
 
     # ── UI ─────────────────────────────────────────────────────────────────
 
@@ -75,18 +305,20 @@ class MainWindow(QMainWindow):
         self._file_list = FileListPanel()
         self._file_list.setMinimumWidth(200)
         self._file_list.setMaximumWidth(300)
+        self._file_list.set_dark(self._dark)  # Initialize theme button state
         self._file_list.open_files_requested.connect(self._open_files)
         self._file_list.open_folder_requested.connect(self._open_folder)
         self._file_list.save_all_requested.connect(self._save_all)
         self._file_list.single_selected.connect(self._on_single_selected)
         self._file_list.batch_selected.connect(self._on_batch_selected)
         self._file_list.selection_cleared.connect(self._on_selection_cleared)
-        self._file_list.theme_toggle_requested.connect(self._toggle_theme)
         self._file_list.status_message.connect(self._show_status)
         splitter.addWidget(self._file_list)
 
         self._editor = EditorPanel()
         self._editor.status_message.connect(self._show_status)
+        self._editor.tags_dirtied.connect(self._file_list.update_items)
+        self._editor.tags_renamed.connect(self._file_list.on_tags_renamed)
         self._editor.set_dark(self._dark)   # sync initial theme
         splitter.addWidget(self._editor)
 
@@ -99,41 +331,194 @@ class MainWindow(QMainWindow):
         self._status.setObjectName("statusBar")
         self.setStatusBar(self._status)
 
+        self._progress = QProgressBar()
+        self._progress.setFixedWidth(150)
+        self._progress.setFixedHeight(14)
+        self._progress.hide()
+        self._status.addPermanentWidget(self._progress)
+        
+        self._build_menu()
+
+    def _build_menu(self):
+        menubar = self.menuBar()
+
+        # File Menu
+        file_menu = menubar.addMenu("&File")
+
+        action_open_files = QAction("Open Files...", self)
+        action_open_files.setShortcut(QKeySequence.StandardKey.Open)
+        action_open_files.triggered.connect(self._open_files)
+        file_menu.addAction(action_open_files)
+
+        action_open_folder = QAction("Open Folder...", self)
+        action_open_folder.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        action_open_folder.triggered.connect(self._open_folder)
+        file_menu.addAction(action_open_folder)
+
+        file_menu.addSeparator()
+
+        action_save_all = QAction("Save All", self)
+        action_save_all.setMenuRole(QAction.MenuRole.NoRole)
+        action_save_all.setShortcut(QKeySequence.StandardKey.Save)
+        action_save_all.triggered.connect(self._save_all)
+        file_menu.addAction(action_save_all)
+        
+        file_menu.addSeparator()
+        
+        action_quit = QAction("Quit", self)
+        action_quit.setMenuRole(QAction.MenuRole.QuitRole)
+        action_quit.setShortcut(QKeySequence.StandardKey.Quit)
+        action_quit.triggered.connect(QApplication.quit)
+        file_menu.addAction(action_quit)
+
+        # Help Menu
+        help_menu = menubar.addMenu("&Help")
+
+        self._action_check_updates = QAction("Check for Updates...", self)
+        self._action_check_updates.setMenuRole(QAction.MenuRole.NoRole)
+        self._action_check_updates.triggered.connect(self._check_for_updates)
+        help_menu.addAction(self._action_check_updates)
+
+        action_about = QAction("About Craftag", self)
+        action_about.setMenuRole(QAction.MenuRole.AboutRole)
+        action_about.triggered.connect(self._show_about)
+        help_menu.addAction(action_about)
+
+        action_quit.setMenuRole(QAction.MenuRole.QuitRole)
+
     # ── Theme ───────────────────────────────────────────────────────────────
 
-    def _toggle_theme(self):
-        self._dark = not self._dark
+    def _sync_system_theme(self):
+        """Read the current system color scheme and apply it."""
+        from PySide6.QtCore import Qt as _Qt
+        scheme = QGuiApplication.styleHints().colorScheme()
+        self._dark = (scheme == _Qt.ColorScheme.Dark)
         self._file_list.set_dark(self._dark)
         self._editor.set_dark(self._dark)
         self._apply_stylesheet()
 
+    def _on_color_scheme_changed(self, scheme):
+        """Slot called when the OS toggles dark/light mode."""
+        from PySide6.QtCore import Qt as _Qt
+        self._dark = (scheme == _Qt.ColorScheme.Dark)
+        self._file_list.set_dark(self._dark)
+        self._editor.set_dark(self._dark)
+        self._apply_stylesheet()
+
+    def _show_about(self):
+        dlg = AboutDialog(self, dark=self._dark)
+        dlg.exec()
+
+    # ── Check for updates ──────────────────────────────────────────────────────
+
+    def _check_for_updates(self):
+        """Spin up UpdateWorker on a thread and disable the menu item while checking."""
+        self._action_check_updates.setEnabled(False)
+        self._action_check_updates.setText("Checking…")
+        self._show_status("Checking for updates…", False)
+
+        thread = QThread(self)
+        worker = UpdateWorker()
+        worker.moveToThread(thread)
+
+        if not hasattr(self, "_update_workers"):
+            self._update_workers: list = []
+        self._update_workers.append((thread, worker))
+
+        thread.started.connect(worker.run)
+
+        def _done():
+            if (thread, worker) in self._update_workers:
+                self._update_workers.remove((thread, worker))
+            worker.deleteLater()
+            thread.deleteLater()
+            self._action_check_updates.setEnabled(True)
+            self._action_check_updates.setText("Check for Updates...")
+
+        worker.up_to_date.connect(self._on_update_up_to_date)
+        worker.update_available.connect(self._on_update_available)
+        worker.error.connect(self._on_update_error)
+        for sig in (worker.up_to_date, worker.update_available, worker.error):
+            sig.connect(thread.quit)
+        thread.finished.connect(_done)
+        thread.start()
+
+    def _on_update_up_to_date(self):
+        from craftag_py.__version__ import VERSION
+        self._show_status("", False)
+        QMessageBox.information(
+            self, "Up to Date",
+            f"You are running the latest version of Craftag ({VERSION})."
+        )
+
+    def _on_update_available(self, latest: str, dl_url: str):
+        self._show_status("", False)
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        from craftag_py.__version__ import VERSION
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Update Available")
+        dlg.setFixedWidth(360)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        layout.addWidget(QLabel(f"<b>Craftag {latest} is available!</b>"))
+        layout.addWidget(QLabel(f"You are on version {VERSION}."))
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        later_btn = QPushButton("Later")
+        later_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(later_btn)
+
+        dl_btn = QPushButton("Download")
+        def _open_dl():
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(dl_url))
+            dlg.accept()
+        dl_btn.clicked.connect(_open_dl)
+        btn_row.addWidget(dl_btn)
+
+        layout.addLayout(btn_row)
+        dlg.exec()
+
+    def _on_update_error(self, msg: str):
+        self._show_status("", False)
+        QMessageBox.warning(
+            self, "Update Check Failed",
+            f"Could not check for updates:\n{msg}"
+        )
+
     def _apply_stylesheet(self):
         dark = self._dark
         if dark:
-            BG          = "#0d0f1a"
-            SIDEBAR_BG  = "#0b0d18"
-            HEADER_BG   = "#0f1120"
-            BORDER      = "#1e2030"
-            SEP         = "#1e2030"
-            TEXT        = "#e0e0e8"
-            TEXT_MUTED  = "#6a7090"
-            TEXT_SUBTLE = "#383c58"
-            INPUT_BG    = "rgba(0,0,0,0.3)"
-            INPUT_BOR   = "#1e2235"
-            LIST_ITEM   = "#c8ccd8"
-            LIST_SEL    = "rgba(10,132,255,0.16)"
+            BG          = "#161616"
+            SIDEBAR_BG  = "#111111"
+            HEADER_BG   = "#1a1a1a"
+            BORDER      = "#2a2a2a"
+            SEP         = "#2a2a2a"
+            TEXT        = "#e8e8e8"
+            TEXT_MUTED  = "#787878"
+            TEXT_SUBTLE = "#404040"
+            INPUT_BG    = "#1e1e1e"
+            INPUT_BOR   = "#333333"
+            LIST_ITEM   = "#d0d0d0"
+            LIST_SEL    = "rgba(255,255,255,0.10)"
             LIST_HOVER  = "rgba(255,255,255,0.04)"
-            STATUS_BG   = "#080a14"
-            STATUS_BOR  = "#141628"
-            HINT_COL    = "#2e3250"
-            SCROLL_TH   = "#252840"
-            SCROLL_HV   = "#353a58"
-            BTN_BG      = "#181a2a"
-            BTN_BOR     = "#252840"
-            BTN_COL     = "#9098b8"
-            BTN_HV_BG   = "#1e2136"
-            BTN_HV_BOR  = "#303558"
-            BTN_HV_COL  = "#c0c8e0"
+            STATUS_BG   = "#0e0e0e"
+            STATUS_BOR  = "#222222"
+            HINT_COL    = "#383838"
+            SCROLL_TH   = "#303030"
+            SCROLL_HV   = "#484848"
+            BTN_BG      = "#202020"
+            BTN_BOR     = "#303030"
+            BTN_COL     = "#888888"
+            BTN_HV_BG   = "#282828"
+            BTN_HV_BOR  = "#444444"
+            BTN_HV_COL  = "#cccccc"
         else:
             BG          = "#f5f5f7"
             SIDEBAR_BG  = "#ececee"
@@ -202,11 +587,11 @@ class MainWindow(QMainWindow):
             padding: 0;
         }}
         #iconBtn:hover {{
-            background: {ACCENT_SOFT};
-            border-color: {ACCENT};
-            color: {ACCENT};
+            background: {BTN_HV_BG};
+            border-color: {TEXT_MUTED};
+            color: {TEXT};
         }}
-        #iconBtn:pressed {{ background: {ACCENT_SOFT}; }}
+        #iconBtn:pressed {{ background: {BTN_BG}; }}
         #iconBtn:disabled {{ opacity: 0.3; }}
 
         /* Text buttons (row 2) */
@@ -218,7 +603,7 @@ class MainWindow(QMainWindow):
             padding: 0 4px;
             text-align: left;
         }}
-        #textBtn:hover {{ color: {DANGER}; }}
+        #textBtn:hover {{ color: {TEXT}; }}
         #textBtn:disabled {{ opacity: 0.3; }}
 
         #accentTextBtn {{
@@ -233,35 +618,21 @@ class MainWindow(QMainWindow):
         #accentTextBtn:hover {{ color: {"#2a94ff" if dark else "#0060cc"}; }}
         #accentTextBtn:disabled {{ opacity: 0.3; }}
 
-        /* Clear All — subtle danger button */
-        #sidebarClearBtn {{
-            background: transparent;
-            border: 1px solid {BTN_BOR};
-            border-radius: 5px;
-            color: {TEXT_MUTED};
-            font-size: 11px;
-            padding: 0 8px;
-        }}
-        #sidebarClearBtn:hover {{
-            background: {"rgba(224,85,85,0.1)" if dark else "rgba(217,64,64,0.07)"};
-            border-color: {DANGER};
-            color: {DANGER};
-        }}
-        #sidebarClearBtn:disabled {{ opacity: 0.3; }}
 
-        /* Save All — accent button */
+
+        /* Save All — neutral style */
         #sidebarSaveBtn {{
-            background: {ACCENT_SOFT};
-            border: 1px solid {ACCENT};
+            background: {BTN_BG};
+            border: 1px solid {BORDER};
             border-radius: 5px;
-            color: {ACCENT};
+            color: {TEXT};
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 500;
             padding: 0 8px;
         }}
         #sidebarSaveBtn:hover {{
-            background: {ACCENT};
-            color: #fff;
+            background: {BTN_HV_BG};
+            border-color: {TEXT_MUTED};
         }}
         #sidebarSaveBtn:disabled {{ opacity: 0.3; }}
 
@@ -347,13 +718,79 @@ class MainWindow(QMainWindow):
             border-radius: 6px;
             color: {TEXT};
             padding: 4px 8px;
-            selection-background-color: {ACCENT_SOFT};
+            selection-background-color: {LIST_SEL};
         }}
         QLineEdit:focus {{
-            border-color: {ACCENT};
-            background: {"rgba(10,132,255,0.06)" if dark else "rgba(0,113,227,0.04)"};
+            border-color: {TEXT_MUTED};
+            background: {INPUT_BG};
         }}
         QLineEdit:disabled {{ color: {TEXT_SUBTLE}; }}
+
+        QComboBox {{
+            background: {INPUT_BG};
+            border: 1px solid {INPUT_BOR};
+            border-radius: 6px;
+            color: {TEXT};
+            padding: 4px 8px;
+            font-size: 13px;
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
+        }}
+        QComboBox::down-arrow {{
+            image: none;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid {TEXT_MUTED};
+            margin-right: 8px;
+        }}
+        QComboBox:focus {{
+            border-color: {TEXT_MUTED};
+            background: {INPUT_BG};
+        }}
+        QComboBox QAbstractItemView {{
+            border: 1px solid {BORDER};
+            border-radius: 6px;
+            background: {BG};
+            outline: none;
+            selection-background-color: {LIST_SEL};
+        }}
+
+        QTextEdit {{
+            background: {INPUT_BG};
+            border: 1px solid {INPUT_BOR};
+            border-radius: 6px;
+            color: {TEXT};
+            font-size: 13px;
+            padding: 8px;
+        }}
+        QTextEdit:focus {{
+            border-color: {TEXT_MUTED};
+            background: {INPUT_BG};
+        }}
+
+        /* ── Tabs ── */
+        QTabWidget::pane {{
+            border: none;
+            background: transparent;
+        }}
+        QTabBar::tab {{
+            background: transparent;
+            color: {TEXT_MUTED};
+            padding: 10px 16px;
+            border-bottom: 2px solid transparent;
+            font-size: 13px;
+            font-weight: 500;
+        }}
+        QTabBar::tab:hover {{
+            color: {TEXT};
+            background: {LIST_HOVER};
+        }}
+        QTabBar::tab:selected {{
+            color: {TEXT};
+            border-bottom: 2px solid {TEXT_MUTED};
+        }}
 
         /* ── Buttons ── */
         QPushButton {{
@@ -390,13 +827,13 @@ class MainWindow(QMainWindow):
             font-size: 11px;
             padding: 2px 8px;
             border-radius: 5px;
-            color: {DANGER};
-            border-color: {"rgba(224,85,85,0.3)" if dark else "rgba(217,64,64,0.3)"};
+            color: {TEXT};
+            border-color: {BORDER};
             background: transparent;
         }}
         QPushButton#smallDangerBtn:hover {{
-            background: {"rgba(224,85,85,0.1)" if dark else "rgba(217,64,64,0.08)"};
-            border-color: {DANGER};
+            background: {BTN_HV_BG};
+            border-color: {TEXT_MUTED};
         }}
 
         /* ── Scrollbar ── */
@@ -413,6 +850,7 @@ class MainWindow(QMainWindow):
         #statusBar {{
             background: {STATUS_BG};
             border-top: 1px solid {STATUS_BOR};
+            color: {TEXT_MUTED};
             font-size: 12px;
             padding: 1px 12px;
         }}
@@ -468,38 +906,128 @@ class MainWindow(QMainWindow):
             self._show_status("No supported audio files found.", True)
 
     def _save_all(self):
-        tags = self._file_list.all_tags()
-        if not tags:
-            return
-        self._show_status("Saving…", False)
-        ok = fail = 0
-        for tag in tags:
+        try:
+            self._editor.commit_to_memory()
+            tags = [t for t in self._file_list.all_tags() if t.is_dirty]
+            if not tags:
+                self._show_status("No changes to save.", False)
+                return
+            self._show_status(f"Saving 0 / {len(tags)}…", False)
+            self._file_list.set_saving(True)
+
+            self._progress.setMaximum(len(tags))
+            self._progress.setValue(0)
+            self._progress.show()
+
+            thread = QThread(self)
+            worker = SaveWorker(tags)
+            worker.moveToThread(thread)
+
+            if not hasattr(self, '_workers'):
+                self._workers = []
+            self._workers.append((thread, worker))
+
+            thread.started.connect(worker.run)
+            
+            def on_progress(done, total):
+                self._show_status(f"Saving {done} / {total}…", False)
+                self._progress.setValue(done)
+
+            # CRITICAL: must be QueuedConnection so that on_progress always
+            # executes on the main (GUI) thread, not on the QThread worker.
+            # Without this, PySide6 has no thread affinity for a plain Python
+            # closure and dispatches it synchronously on the worker thread,
+            # causing QWidget repaints from a non-GUI thread → segfault.
+            worker.progress.connect(on_progress, Qt.ConnectionType.QueuedConnection)
+            worker.finished.connect(self._on_save_all_done, Qt.ConnectionType.QueuedConnection)
+            worker.finished.connect(lambda *_: thread.quit(), Qt.ConnectionType.QueuedConnection)
+
+            def cleanup():
+                worker.deleteLater()
+                thread.deleteLater()
+                if (thread, worker) in self._workers:
+                    self._workers.remove((thread, worker))
+                self._file_list.set_saving(False)
+                self._progress.hide()
+
+            thread.finished.connect(cleanup)
+            thread.start()
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[MainWindow._save_all] Exception:\n{tb}")
+            QMessageBox.critical(self, "Save All Error", f"An error occurred while saving: {e}\n\nSee console for details.")
+            # Ensure UI isn't left in a saving state
             try:
-                save_tag(tag)
-                ok += 1
-            except Exception as e:
-                print(f"[save_all] {tag.path}: {e}")
-                fail += 1
+                self._file_list.set_saving(False)
+            except Exception:
+                pass
+            try:
+                self._progress.hide()
+            except Exception:
+                pass
+
+    def _on_save_all_done(self, saved_tags: list, fail: int):
+        # Reset dirty state on the main thread — safe because the worker
+        # thread has already finished writing these tags to disk and will
+        # not touch the AudioTag objects again after emitting this signal.
+        for tag in saved_tags:
+            tag.is_dirty = False
+            tag._staged_art = None
+            tag._staged_art_mime = None
+            tag._staged_art_removed = False
+        ok = len(saved_tags)
+        self._file_list.update_items()  # redraw list items to clear dirty dots
         if fail == 0:
-            self._show_status(f"Saved {ok} files.", False)
+            self._show_status(f"Saved {ok} file(s).", False)
         else:
             self._show_status(f"{ok} saved, {fail} failed.", True)
 
     def _on_single_selected(self, tag: AudioTag):
+        self._editor.commit_to_memory()
         self._editor.load_single(tag)
+        self._update_window_title([tag])
 
     def _on_batch_selected(self, tags: list[AudioTag]):
+        self._editor.commit_to_memory()
         self._editor.load_batch(tags)
+        self._update_window_title(tags)
 
     def _on_selection_cleared(self):
+        self._editor.commit_to_memory()
         self._editor.clear()
+        self._update_window_title([])
+
+    def _update_window_title(self, tags: list):
+        """Show track context in the window title.
+        macOS: title bar only (dock/menu-bar already shows 'Craftag').
+        Windows/Linux: prepend 'Craftag — ' so the taskbar stays labelled.
+        """
+        import sys
+        if not tags:
+            self.setWindowTitle("" if sys.platform == "darwin" else "Craftag")
+            return
+
+        first = tags[0]
+        title  = first.title  or first.filename
+        artist = first.artist or ""
+
+        if len(tags) == 1:
+            track_text = f"{title} — {artist}" if artist else title
+        else:
+            track_text = f"{len(tags)} files — {title}"
+
+        if sys.platform == "darwin":
+            self.setWindowTitle(track_text)
+        else:
+            self.setWindowTitle(f"Craftag — {track_text}")
 
     def _show_status(self, msg: str, is_error: bool):
-        color = "#e05555" if is_error else ("#5dbf8a" if self._dark else "#1a7a40")
         self._status.showMessage(msg)
-        self._status.setStyleSheet(
-            f"QStatusBar {{ color: {color}; font-size: 12px; }}"
-        )
+        if is_error:
+            self._status.setStyleSheet("QStatusBar { color: #e05555; }")
+        else:
+            self._status.setStyleSheet("")
 
     # ── Drag & Drop ─────────────────────────────────────────────────────────
 
@@ -508,6 +1036,13 @@ class MainWindow(QMainWindow):
             e.acceptProposedAction()
 
     def dropEvent(self, e: QDropEvent):
-        paths = [u.toLocalFile() for u in e.mimeData().urls()]
+        paths = []
+        for url in e.mimeData().urls():
+            local = url.toLocalFile().strip()
+            if local:
+                # os.path.normpath fixes mixed-slash paths from Windows
+                # Explorer (e.g. 'C:/Users/foo') and trailing separators
+                # from some Linux file managers.
+                paths.append(os.path.normpath(local))
         if paths:
             self._load_paths(paths)
