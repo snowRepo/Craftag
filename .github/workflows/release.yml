@@ -39,19 +39,10 @@ jobs:
         run: |
           pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --name "Craftag" craftag_py/main.py
 
-      - name: Create DMG Installer
+      - name: Package macOS App (DMG)
         run: |
-          brew install create-dmg
-          create-dmg \
-            --volname "Craftag Installer" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "Craftag.app" 175 190 \
-            --hide-extension "Craftag.app" \
-            --app-drop-link 425 190 \
-            "Craftag-macOS-${{ matrix.arch }}.dmg" \
-            "dist/Craftag.app/"
+          python -m pip install dmgbuild
+          dmgbuild -D app=dist/Craftag.app "Craftag Installer" "Craftag-macOS-${{ matrix.arch }}.dmg"
 
       - name: Upload macOS Release
         uses: softprops/action-gh-release@v2
