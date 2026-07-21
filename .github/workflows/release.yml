@@ -10,15 +10,7 @@ permissions:
 
 jobs:
   build-mac:
-    name: Build macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            arch: AppleSilicon
-          - os: macos-13
-            arch: Intel
+    runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -37,21 +29,21 @@ jobs:
 
       - name: Build macOS App
         run: |
-          pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --name "Craftag" craftag_py/main.py
+          pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --target-architecture universal2 --name "Craftag" craftag_py/main.py
 
       - name: Package macOS App (DMG)
         run: |
           mkdir dmg_content
           mv dist/Craftag.app dmg_content/
           ln -s /Applications dmg_content/Applications
-          hdiutil create -volname "Craftag" -srcfolder dmg_content -ov -format UDZO "Craftag-macOS-${{ matrix.arch }}.dmg"
+          hdiutil create -volname "Craftag" -srcfolder dmg_content -ov -format UDZO "Craftag-macOS.dmg"
 
       - name: Upload macOS Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: Craftag-macOS-${{ matrix.arch }}.dmg
+          files: Craftag-macOS.dmg
 
   build-windows:
     runs-on: windows-latest
