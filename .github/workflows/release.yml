@@ -41,8 +41,10 @@ jobs:
 
       - name: Package macOS App (DMG)
         run: |
-          python -m pip install dmgbuild
-          dmgbuild -D app=dist/Craftag.app "Craftag Installer" "Craftag-macOS-${{ matrix.arch }}.dmg"
+          mkdir dmg_content
+          mv dist/Craftag.app dmg_content/
+          ln -s /Applications dmg_content/Applications
+          hdiutil create -volname "Craftag" -srcfolder dmg_content -ov -format UDZO "Craftag-macOS-${{ matrix.arch }}.dmg"
 
       - name: Upload macOS Release
         uses: softprops/action-gh-release@v2
