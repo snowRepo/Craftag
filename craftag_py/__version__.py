@@ -1,2 +1,2 @@
 # Single source of truth for Craftag's version string.
-VERSION = "2.0.0"
+VERSION = "1.0.0"

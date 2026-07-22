@@ -72,31 +72,7 @@ class FileItemWidget(QWidget):
         layout.addWidget(self.btn, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # Ensure widgets don't get the global editor background
-        self.setStyleSheet("""
-            QWidget { background: transparent; border: none; }
-            QLabel#itemArtistLbl { color: #888888; border: none; }
-            QToolButton#itemRemoveBtn {
-                background: transparent;
-                color: #888888;
-                border: none;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QToolButton#itemRemoveBtn:hover {
-                color: #ffffff;
-                background: rgba(255, 255, 255, 0.15);
-                border-radius: 4px;
-            }
-            QLabel#formatBadge {
-                background-color: rgba(140, 140, 150, 0.25);
-                color: #888888;
-                border-radius: 5px;
-                padding: 1px 4px;
-                font-size: 9px;
-                font-weight: 700;
-                margin-top: 1px;
-            }
-        """)
+        self.setStyleSheet("QWidget { background: transparent; border: none; }")
 
     def _on_remove_clicked(self, *args):
         self.remove_clicked.emit(self.path)

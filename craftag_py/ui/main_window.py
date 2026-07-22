@@ -130,6 +130,51 @@ class UpdateWorker(QObject):
         except Exception:
             self.error.emit("Network error. Please check your internet connection and try again.")
 
+class DownloadWorker(QObject):
+    progress = Signal(int)
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, url: str, filename: str):
+        super().__init__()
+        self._url = url
+        self._filename = filename
+
+    def run(self):
+        try:
+            import urllib.request
+            import ssl
+            from pathlib import Path
+
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(self._url, headers={"User-Agent": "Craftag/Updater"})
+            
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                dl_path = Path.home() / "Downloads" / self._filename
+                total_length = resp.headers.get('content-length')
+                
+                if total_length is None:
+                    self.progress.emit(50)
+                    with open(dl_path, 'wb') as f:
+                        f.write(resp.read())
+                    self.progress.emit(100)
+                else:
+                    total_length = int(total_length)
+                    dl = 0
+                    with open(dl_path, 'wb') as f:
+                        while True:
+                            chunk = resp.read(8192)
+                            if not chunk:
+                                break
+                            dl += len(chunk)
+                            f.write(chunk)
+                            done = int(100 * dl / total_length)
+                            self.progress.emit(done)
+                            
+                self.finished.emit(str(dl_path))
+                
+        except Exception:
+            self.error.emit("Download failed. Please check your internet connection.")
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None, dark=False, startup_mode=False):
@@ -453,8 +498,12 @@ class MainWindow(QMainWindow):
 
     def _on_update_available(self, latest: str, dl_url: str):
         self._show_status("", False)
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QProgressBar
+        from PySide6.QtCore import QThread, QCoreApplication
         from craftag_py.__version__ import VERSION
+        import platform
+        import os
+        import subprocess
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Update Available")
@@ -463,8 +512,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        layout.addWidget(QLabel(f"<b>Craftag {latest} is available!</b>"))
+        lbl = QLabel(f"<b>Craftag {latest} is available!</b>")
+        layout.addWidget(lbl)
         layout.addWidget(QLabel(f"You are on version {VERSION}."))
+
+        prg = QProgressBar()
+        prg.setRange(0, 100)
+        prg.setValue(0)
+        prg.hide()
+        layout.addWidget(prg)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -473,13 +529,54 @@ class MainWindow(QMainWindow):
         later_btn.clicked.connect(dlg.reject)
         btn_row.addWidget(later_btn)
 
-        dl_btn = QPushButton("Download")
-        def _open_dl():
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl(dl_url))
-            dlg.accept()
-        dl_btn.clicked.connect(_open_dl)
+        dl_btn = QPushButton("Download Update")
+
+        def _start_download():
+            dl_btn.setEnabled(False)
+            later_btn.hide()
+            prg.show()
+
+            if platform.system() == "Windows":
+                filename = "Craftag-Windows-Installer.exe"
+            else:
+                filename = "Craftag-macOS.dmg"
+
+            github_url = f"https://github.com/snowRepo/Craftag/releases/download/v{latest}/{filename}"
+            
+            self._dl_thread = QThread(dlg)
+            self._dl_worker = DownloadWorker(github_url, filename)
+            self._dl_worker.moveToThread(self._dl_thread)
+            self._dl_thread.started.connect(self._dl_worker.run)
+
+            def _on_prog(v):
+                prg.setValue(v)
+
+            def _on_fin(path):
+                prg.hide()
+                lbl.setText(f"<b>Ready to install!</b>")
+                dl_btn.setText("Install Now")
+                dl_btn.setEnabled(True)
+                
+                dl_btn.clicked.disconnect()
+                
+                def _do_install():
+                    try:
+                        if platform.system() == "Windows":
+                            os.startfile(path)
+                        else:
+                            subprocess.run(["open", path])
+                        QCoreApplication.quit()
+                    except Exception:
+                        pass
+                        
+                dl_btn.clicked.connect(_do_install)
+
+            self._dl_worker.progress.connect(_on_prog)
+            self._dl_worker.finished.connect(_on_fin)
+            # Worker error could be handled gracefully, but we just print for now
+            self._dl_thread.start()
+
+        dl_btn.clicked.connect(_start_download)
         btn_row.addWidget(dl_btn)
 
         layout.addLayout(btn_row)
@@ -656,11 +753,11 @@ class MainWindow(QMainWindow):
         }}
         
         #itemTitleLbl {{
-            color: {LIST_ITEM};
+            color: {TEXT};
         }}
         
         #itemArtistLbl {{
-            color: {TEXT_MUTED};
+            color: {"#aaaaaa" if dark else "#666666"};
         }}
         
         #itemRemoveBtn {{
@@ -675,6 +772,16 @@ class MainWindow(QMainWindow):
             color: {DANGER};
             background: {"rgba(224,85,85,0.1)" if dark else "rgba(217,64,64,0.07)"};
             border-radius: 4px;
+        }}
+        
+        #formatBadge {{
+            background-color: {"rgba(140, 140, 150, 0.25)" if dark else "rgba(0, 0, 0, 0.08)"};
+            color: {"#aaaaaa" if dark else "#555555"};
+            border-radius: 5px;
+            padding: 1px 4px;
+            font-size: 9px;
+            font-weight: 700;
+            margin-top: 1px;
         }}
         #fileList::item:hover:!selected {{ background: {LIST_HOVER}; }}
 
@@ -1015,7 +1122,7 @@ class MainWindow(QMainWindow):
         if len(tags) == 1:
             track_text = f"{title} — {artist}" if artist else title
         else:
-            track_text = f"{len(tags)} files — {title}"
+            track_text = f"{len(tags)} files selected"
 
         if sys.platform == "darwin":
             self.setWindowTitle(track_text)
