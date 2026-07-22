@@ -4,7 +4,15 @@ Supports light/dark theme toggle wired through FileListPanel's header.
 """
 from __future__ import annotations
 import os
+import sys
 
+def get_resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, handling PyInstaller's _MEIPASS on Windows."""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QStatusBar, QFileDialog,
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QApplication,
@@ -190,7 +198,7 @@ class AboutDialog(QDialog):
         header_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         logo_lbl = QLabel()
-        icon_path = os.path.join(os.path.dirname(__file__), "..", "..", "logo.png")
+        icon_path = get_resource_path("logo.png")
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
             logo_lbl.setPixmap(pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
@@ -216,7 +224,7 @@ class AboutDialog(QDialog):
             # EULA text
             self.text_edit = QTextEdit()
             self.text_edit.setReadOnly(True)
-            license_path = os.path.join(os.path.dirname(__file__), "..", "..", "license.txt")
+            license_path = get_resource_path("license.txt")
             if os.path.exists(license_path):
                 with open(license_path, "r", encoding="utf-8") as f:
                     self.text_edit.setPlainText(f.read())
@@ -680,7 +688,8 @@ class MainWindow(QMainWindow):
             border: 1px solid {BTN_BOR};
             border-radius: 6px;
             color: {TEXT_MUTED};
-            font-size: 13px;
+            font-size: 14px;
+            font-family: "Apple Color Emoji", "Segoe UI Symbol", sans-serif;
             padding: 0;
         }}
         #iconBtn:hover {{
@@ -764,8 +773,8 @@ class MainWindow(QMainWindow):
             background: transparent;
             color: {TEXT_MUTED};
             border: none;
-            font-size: 15px;
-            font-weight: bold;
+            font-size: 14px;
+            font-weight: normal;
             padding-bottom: 2px;
         }}
         #itemRemoveBtn:hover {{
@@ -796,6 +805,24 @@ class MainWindow(QMainWindow):
 
         /* ── Editor ── */
         EditorPanel {{ background: {BG}; }}
+        
+        QTabWidget::pane {{
+            border: none;
+            border-top: 1px solid {BORDER};
+        }}
+        QTabBar::tab {{
+            padding: 8px 16px;
+            margin: 0;
+            background: transparent;
+            color: {TEXT_MUTED};
+        }}
+        QTabBar::tab:selected {{
+            color: {TEXT};
+            font-weight: 600;
+        }}
+        QTabBar {{
+            alignment: center;
+        }}
 
         #trackTitle {{
             font-size: 14px;
@@ -1108,7 +1135,8 @@ class MainWindow(QMainWindow):
     def _update_window_title(self, tags: list):
         """Show track context in the window title.
         macOS: title bar only (dock/menu-bar already shows 'Craftag').
-        Windows/Linux: prepend 'Craftag — ' so the taskbar stays labelled.
+        Windows: title bar only (OS pins the executable name to taskbars already where needed, 
+                 so setting just the text respects left-aligned title clarity constraints).
         """
         import sys
         if not tags:
@@ -1124,10 +1152,8 @@ class MainWindow(QMainWindow):
         else:
             track_text = f"{len(tags)} files selected"
 
-        if sys.platform == "darwin":
-            self.setWindowTitle(track_text)
-        else:
-            self.setWindowTitle(f"Craftag — {track_text}")
+        # Apply purely the track text so we don't duplicate "Craftag - ..." on Windows bars
+        self.setWindowTitle(track_text)
 
     def _show_status(self, msg: str, is_error: bool):
         self._status.showMessage(msg)
