@@ -58,8 +58,8 @@ class iTunesWorker(QObject):
                 self.found.emit(result)
             else:
                 self.not_found.emit()
-        except Exception as exc:
-            self.error.emit(str(exc))
+        except Exception:
+            self.error.emit("Network error. Please check your internet connection and try again.")
 
 
 # ── Editor panel ───────────────────────────────────────────────────────────────

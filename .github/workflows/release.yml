@@ -27,9 +27,9 @@ jobs:
           python -m pip install -r craftag_py/requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build macOS App
+      - name: Build macOS App (Universal & Optimized)
         run: |
-          pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --target-architecture universal2 --name "Craftag" craftag_py/main.py
+          pyinstaller --noconfirm --onedir --windowed --icon "logo.icns" --target-architecture universal2 --exclude-module "PySide6.QtWebEngineCore" --exclude-module "PySide6.QtWebEngineWidgets" --exclude-module "PySide6.QtQml" --exclude-module "PySide6.QtQuick" --exclude-module "PySide6.QtNetwork" --name "Craftag" craftag_py/main.py
 
       - name: Package macOS App (DMG)
         run: |
@@ -63,13 +63,18 @@ jobs:
           python -m pip install -r craftag_py/requirements.txt
           python -m pip install pyinstaller
 
-      - name: Build Windows Executable
+      - name: Build Windows Executable (Optimized Directory)
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon "logo.ico" --name "Craftag" craftag_py/main.py
+          pyinstaller --noconfirm --onedir --windowed --icon "logo.ico" --exclude-module "PySide6.QtWebEngineCore" --exclude-module "PySide6.QtWebEngineWidgets" --exclude-module "PySide6.QtQml" --exclude-module "PySide6.QtQuick" --exclude-module "PySide6.QtNetwork" --name "Craftag" craftag_py/main.py
+
+      - name: Compile Inno Setup Installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: installer.iss
 
       - name: Upload Windows Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: dist/Craftag.exe
+          files: dist/Craftag-Windows-Installer.exe

@@ -127,8 +127,8 @@ class UpdateWorker(QObject):
                 self.update_available.emit(latest, dl_url)
             else:
                 self.up_to_date.emit()
-        except Exception as exc:
-            self.error.emit(str(exc))
+        except Exception:
+            self.error.emit("Network error. Please check your internet connection and try again.")
 
 
 class AboutDialog(QDialog):
