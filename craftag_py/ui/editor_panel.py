@@ -52,7 +52,7 @@ class iTunesWorker(QObject):
 
     def run(self):
         try:
-            from craftag_py.core.musicbrainz import lookup_recording
+            from craftag_py.core.itunes import lookup_recording
             result = lookup_recording(self._title, self._artist)
             if result:
                 self.found.emit(result)

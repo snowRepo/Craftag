@@ -11,7 +11,7 @@ A fast, cross-platform audio tag editor built with Python and PySide6.
 - Edit tags for **MP3, FLAC, M4A/AAC, OGG, Opus, WAV, AIFF, WavPack**
 - Batch-edit shared fields across multiple selected files
 - Embedded album art — set, replace, or remove per file
-- **Auto-Fill** — look up missing metadata from MusicBrainz with one click
+- **Auto-Fill** — look up missing metadata from iTunes with one click
 - Dirty-state indicator (● dot) and unsaved-changes warning before close
 - File queue search / filter by title, artist, or filename
 - Format badge (MP3, FLAC…) on every queue item
@@ -89,9 +89,9 @@ venv/bin/python -m craftag_py.main
 
 ---
 
-## Auto-Fill (MusicBrainz)
+## Auto-Fill (iTunes)
 
-With a file selected and a title entered, press **Auto-Fill** in the editor panel. Craftag searches [MusicBrainz](https://musicbrainz.org) and pre-fills any **empty** fields (Album, Artist, Year, Genre, Track, Album Artist). Existing data is never overwritten.
+With a file selected and a title entered, press **Auto-Fill** in the editor panel. Craftag searches iTunes and pre-fills any **empty** fields (Album, Artist, Year, Genre, Track, Album Artist). Existing data is never overwritten.
 
 ---
 
@@ -111,7 +111,7 @@ Craftag/
 ├── craftag_py/
 │   ├── core/
 │   │   ├── tag_io.py          # All format read/write logic
-│   │   └── musicbrainz.py     # MusicBrainz lookup
+│   │   └── itunes.py          # iTunes API lookup
 │   ├── ui/
 │   │   ├── main_window.py     # Application window & menus
 │   │   ├── editor_panel.py    # Tag editor panel

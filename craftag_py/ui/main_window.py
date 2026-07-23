@@ -119,8 +119,8 @@ class UpdateWorker(QObject):
             import ssl
             from craftag_py.__version__ import VERSION
 
-            # Allow fetching over HTTPS seamlessly
-            ctx = ssl.create_default_context()
+            # Allow fetching over HTTPS seamlessly, ignoring bundled CA issues in Pyinstaller on Mac
+            ctx = ssl._create_unverified_context()
             
             req = urllib.request.Request(self._VERSION_URL, headers={"User-Agent": f"Craftag/{VERSION}"})
             with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
@@ -135,8 +135,8 @@ class UpdateWorker(QObject):
                 self.update_available.emit(latest, dl_url)
             else:
                 self.up_to_date.emit()
-        except Exception:
-            self.error.emit("Network error. Please check your internet connection and try again.")
+        except Exception as e:
+            self.error.emit(f"Network error: {e}\nPlease check your internet connection and try again.")
 
 class DownloadWorker(QObject):
     progress = Signal(int)
@@ -154,7 +154,7 @@ class DownloadWorker(QObject):
             import ssl
             from pathlib import Path
 
-            ctx = ssl.create_default_context()
+            ctx = ssl._create_unverified_context()
             req = urllib.request.Request(self._url, headers={"User-Agent": "Craftag/Updater"})
             
             with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
@@ -181,8 +181,8 @@ class DownloadWorker(QObject):
                             
                 self.finished.emit(str(dl_path))
                 
-        except Exception:
-            self.error.emit("Download failed. Please check your internet connection.")
+        except Exception as e:
+            self.error.emit(f"Download failed: {e}\nPlease check your internet connection.")
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None, dark=False, startup_mode=False):

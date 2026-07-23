@@ -103,7 +103,7 @@ def lookup_recording(title: str, artist: str = "") -> Optional[dict]:
 
 def _fetch_with_retry(url: str, attempts: int = 3, delay: float = 1.5) -> bytes:
     """GET *url*, retrying up to *attempts* times on transient SSL/network errors."""
-    ctx = ssl.create_default_context()
+    ctx = ssl._create_unverified_context()
     last_exc: Exception | None = None
 
     for attempt in range(attempts):
