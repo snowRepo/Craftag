@@ -13,12 +13,51 @@ from typing import List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QAbstractItemView, QApplication, QStackedWidget,
-    QToolButton, QMessageBox, QLineEdit
+    QMessageBox, QLineEdit
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QShortcut, QKeySequence
 
 from craftag_py.core.tag_io import AudioTag
+from craftag_py.ui.widgets import SvgIconButton
+
+# ── Toolbar SVG icon templates — stroke/outline style (18×18 inside 28×28 buttons) ─────
+# Using fill=none + stroke so icons sit light on the monochrome palette
+_ICON_MUSIC = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"'
+    ' fill="none" stroke="{color}" stroke-width="2"'
+    ' stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M9 18V5l12-2v13"/>'
+    '<circle cx="6" cy="18" r="3"/>'
+    '<circle cx="18" cy="16" r="3"/>'
+    '</svg>'
+)
+_ICON_FOLDER = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"'
+    ' fill="none" stroke="{color}" stroke-width="2"'
+    ' stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+    '</svg>'
+)
+_ICON_TRASH = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"'
+    ' fill="none" stroke="{color}" stroke-width="2"'
+    ' stroke-linecap="round" stroke-linejoin="round">'
+    '<polyline points="3 6 5 6 21 6"/>'
+    '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>'
+    '<path d="M10 11v6"/>'
+    '<path d="M14 11v6"/>'
+    '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'
+    '</svg>'
+)
+# ── Inline remove × — thin-stroke X (12×12 drawn inside a 22×22 button) ───────────
+_ICON_CLOSE = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"'
+    ' fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round">'
+    '<line x1="18" y1="6" x2="6" y2="18"/>'
+    '<line x1="6" y1="6" x2="18" y2="18"/>'
+    '</svg>'
+)
 class FileItemWidget(QWidget):
     remove_clicked = Signal(str)
 
@@ -61,9 +100,8 @@ class FileItemWidget(QWidget):
         v.addWidget(self.lbl_artist)
         layout.addLayout(v, stretch=1)
 
-        # Remove btn
-        self.btn = QToolButton()
-        self.btn.setText("✕")
+        # Remove btn — crisp SVG ×, no emoji fallback issues
+        self.btn = SvgIconButton(_ICON_CLOSE, icon_size=12)
         self.btn.setObjectName("itemRemoveBtn")
         self.btn.setFixedSize(22, 22)
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -137,27 +175,23 @@ class FileListPanel(QWidget):
         row1.addStretch()
 
         # ♫ open files
-        self._btn_open = QPushButton("♫")
-        self._btn_open.setToolTip("Open audio files  (⌘O)")
+        self._btn_open = SvgIconButton(_ICON_MUSIC, tooltip="Open audio files  (Ctrl+O)")
         self._btn_open.setFixedSize(28, 28)
         self._btn_open.setObjectName("iconBtn")
         self._btn_open.clicked.connect(self.open_files_requested)
         row1.addWidget(self._btn_open)
-        # 📂 open folder (Using standard Emoji/Text glyph for flawless rendering)
-        self._btn_folder = QPushButton("📂")
+        # 📂 open folder
+        self._btn_folder = SvgIconButton(_ICON_FOLDER, tooltip="Open folder  (Ctrl+Shift+O)")
         self._btn_folder.setFixedSize(28, 28)
         self._btn_folder.setObjectName("iconBtn")
         self._btn_folder.clicked.connect(self.open_folder_requested)
-        self._btn_folder.setToolTip("Open folder  (⌘⇧O)")
         row1.addWidget(self._btn_folder)
-
-        # 🗑 clear queue (Using crisp native text trash can)
-        self._btn_clear = QPushButton("🗑")
+        # 🗑 clear queue
+        self._btn_clear = SvgIconButton(_ICON_TRASH, tooltip="Clear queue")
         self._btn_clear.setFixedSize(28, 28)
         self._btn_clear.setObjectName("iconBtn")
         self._btn_clear.setEnabled(False)
         self._btn_clear.clicked.connect(self._clear_all)
-        self._btn_clear.setToolTip("Clear queue")
         row1.addWidget(self._btn_clear)
 
         # Save All — accent button, inline with icons

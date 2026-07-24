@@ -19,40 +19,84 @@ from PySide6.QtWidgets import (
     QProgressBar, QMessageBox
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings, QTimer
-from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent, QPixmap, QKeySequence, QShortcut, QAction, QGuiApplication
+from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent, QPixmap, QKeySequence, QShortcut, QAction, QGuiApplication, QPainter, QColor
 
 from craftag_py.__version__ import VERSION
 from craftag_py.core.tag_io import AudioTag, read_tag, read_folder, save_tag
 from craftag_py.ui.file_list import FileListPanel
 from craftag_py.ui.editor_panel import EditorPanel
 
+class CustomProgressBar(QLabel):
+    """A crash-proof progress bar that renders completely off-screen to avoid macOS QBackingStore bugs."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(4)
+        self._max = 100
+        self._val = 0
+        self._dark = False
+
+    def setMaximum(self, m: int):
+        self._max = max(1, m)
+        self._render()
+        
+    def setValue(self, v: int):
+        self._val = max(0, min(self._max, v))
+        self._render()
+
+    def set_dark(self, is_dark: bool):
+        self._dark = is_dark
+        self._render()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._render()
+
+    def _render(self):
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            return
+        pm = QPixmap(w, h)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        try:
+            # Draw track background
+            bg_color = QColor("#303030") if self._dark else QColor("#e0e0e0")
+            p.fillRect(0, 0, w, h, bg_color)
+            # Draw progress fill
+            if self._max > 0:
+                pw = int(w * (self._val / self._max))
+                fg_color = QColor("#ffffff") if self._dark else QColor("#007aff")
+                p.fillRect(0, 0, pw, h, fg_color)
+        finally:
+            p.end()
+        self.setPixmap(pm)
+
 
 # ── Background loader ──────────────────────────────────────────────────────────
 
 class LoadWorker(QObject):
-    done     = Signal(list)
     finished = Signal()
 
     def __init__(self, paths: list[str]):
         super().__init__()
         self._paths = paths
+        self.results: list[AudioTag] = []
 
     def run(self):
-        results: list[AudioTag] = []
         try:
             for p in self._paths:
                 try:
                     if os.path.isdir(p):
-                        results.extend(read_folder(p))
+                        self.results.extend(read_folder(p))
                     elif os.path.isfile(p):
                         tag = read_tag(p)
                         if tag:
-                            results.append(tag)
+                            self.results.append(tag)
                 except Exception as e:
                     print(f"[LoadWorker] skipping {p}: {e}")
         finally:
-            # Always emit — even on total failure — so UI never hangs
-            self.done.emit(results)
+            # Always emit finished — even on total failure — so UI never hangs
             self.finished.emit()
 
 
@@ -69,20 +113,20 @@ class SaveWorker(QObject):
     can safely reset their dirty state.
     """
     progress  = Signal(int, int)   # (done_count, total)
-    finished  = Signal(list, int)  # (saved_tags: list[AudioTag], fail_count)
+    finished  = Signal(list, int)  # (saved_paths: list[str], fail_count)
 
     def __init__(self, tags: list[AudioTag]):
         super().__init__()
         self._tags = tags
 
     def run(self):
-        saved_tags = []
+        saved_paths = []
         fail = 0
         total = len(self._tags)
         for i, tag in enumerate(self._tags, 1):
             try:
                 save_tag(tag)
-                saved_tags.append(tag)
+                saved_paths.append(tag.path)
             except Exception as e:
                 print(f"[SaveWorker] {tag.path}: {e}")
                 fail += 1
@@ -90,8 +134,9 @@ class SaveWorker(QObject):
             # emit is safe to call from the worker thread — PySide6 will
             # marshal it onto the main thread before executing the slot.
             self.progress.emit(i, total)
-        # finished is also QueuedConnection; _on_save_all_done runs on main thread.
-        self.finished.emit(saved_tags, fail)
+        # Emitting strings (primitive type) is safely handled by Qt's QueuedConnection
+        # without risking Python garbage collection races on custom objects.
+        self.finished.emit(saved_paths, fail)
 
 
 # ── Update checker ─────────────────────────────────────────────────────────────
@@ -324,9 +369,10 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._dark = False
 
-        icon_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "logo.png"
-        )
+        # Window icon — use the same bundled-asset resolver used in main.py
+        # so the icon is found inside a PyInstaller package on all platforms.
+        icon_name = "logo.ico" if sys.platform == "win32" else "logo.png"
+        icon_path = get_resource_path(icon_name)
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -384,9 +430,8 @@ class MainWindow(QMainWindow):
         self._status.setObjectName("statusBar")
         self.setStatusBar(self._status)
 
-        self._progress = QProgressBar()
-        self._progress.setFixedWidth(150)
-        self._progress.setFixedHeight(14)
+        self._progress = CustomProgressBar()
+        self._progress.setFixedHeight(4)
         self._progress.hide()
         self._status.addPermanentWidget(self._progress)
         
@@ -493,7 +538,8 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._on_update_error)
         for sig in (worker.up_to_date, worker.update_available, worker.error):
             sig.connect(thread.quit)
-        thread.finished.connect(_done)
+        # QueuedConnection: _done re-enables a menu QAction from thread.finished
+        thread.finished.connect(_done, Qt.ConnectionType.QueuedConnection)
         thread.start()
 
     def _on_update_up_to_date(self):
@@ -524,7 +570,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(lbl)
         layout.addWidget(QLabel(f"You are on version {VERSION}."))
 
-        prg = QProgressBar()
+        prg = CustomProgressBar()
         prg.setRange(0, 100)
         prg.setValue(0)
         prg.hide()
@@ -579,8 +625,12 @@ class MainWindow(QMainWindow):
                         
                 dl_btn.clicked.connect(_do_install)
 
-            self._dl_worker.progress.connect(_on_prog)
-            self._dl_worker.finished.connect(_on_fin)
+            # QueuedConnection on both: _on_prog and _on_fin modify dialog
+            # widgets (QProgressBar, QLabel, QPushButton) that live on the
+            # GUI thread. Without QueuedConnection the download thread calls
+            # them directly — non-GUI thread widget access — segfault.
+            self._dl_worker.progress.connect(_on_prog, Qt.ConnectionType.QueuedConnection)
+            self._dl_worker.finished.connect(_on_fin, Qt.ConnectionType.QueuedConnection)
             # Worker error could be handled gracefully, but we just print for now
             self._dl_thread.start()
 
@@ -688,8 +738,6 @@ class MainWindow(QMainWindow):
             border: 1px solid {BTN_BOR};
             border-radius: 6px;
             color: {TEXT_MUTED};
-            font-size: 14px;
-            font-family: "Apple Color Emoji", "Segoe UI Symbol", sans-serif;
             padding: 0;
         }}
         #iconBtn:hover {{
@@ -1019,25 +1067,27 @@ class MainWindow(QMainWindow):
         self._workers.append((thread, worker))
         
         thread.started.connect(worker.run)
-        worker.done.connect(self._on_load_done)
         worker.finished.connect(thread.quit)
-        
+
         def cleanup():
+            # Process loaded tags safely on the main thread, bypassing signal payloads.
+            self._file_list.add_tags(worker.results)
+            n = len(worker.results)
+            if n:
+                self._show_status(f"Loaded {n} file(s).", False)
+            else:
+                self._show_status("No supported audio files found.", True)
+
             worker.deleteLater()
             thread.deleteLater()
             if (thread, worker) in self._workers:
                 self._workers.remove((thread, worker))
-                
-        thread.finished.connect(cleanup)
-        thread.start()
 
-    def _on_load_done(self, tags: list):
-        self._file_list.add_tags(tags)
-        n = len(tags)
-        if n:
-            self._show_status(f"Loaded {n} file(s).", False)
-        else:
-            self._show_status("No supported audio files found.", True)
+        # QueuedConnection is required here: thread.finished is emitted from the
+        # worker thread, and Python callables have no Qt thread affinity, so
+        # AutoConnection would call cleanup() directly on the worker thread.
+        thread.finished.connect(cleanup, Qt.ConnectionType.QueuedConnection)
+        thread.start()
 
     def _save_all(self):
         try:
@@ -1084,7 +1134,11 @@ class MainWindow(QMainWindow):
                 self._file_list.set_saving(False)
                 self._progress.hide()
 
-            thread.finished.connect(cleanup)
+            # QueuedConnection is CRITICAL: cleanup() touches GUI widgets
+            # (set_saving, progress.hide). Without QueuedConnection, PySide6
+            # calls cleanup() directly on the worker thread — illegal GUI
+            # access from a non-GUI thread — segfault.
+            thread.finished.connect(cleanup, Qt.ConnectionType.QueuedConnection)
             thread.start()
         except Exception as e:
             import traceback
@@ -1101,10 +1155,15 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-    def _on_save_all_done(self, saved_tags: list, fail: int):
+    def _on_save_all_done(self, saved_paths: list, fail: int):
+        # Look up the actual AudioTag objects safely on the main GUI thread.
+        # This completely avoids passing complex Python objects across the C++ thread boundary.
+        path_to_tag = {t.path: t for t in self._file_list.all_tags()}
+        saved_tags = [path_to_tag[p] for p in saved_paths if p in path_to_tag]
+
         # Reset dirty state on the main thread — safe because the worker
         # thread has already finished writing these tags to disk and will
-        # not touch the AudioTag objects again after emitting this signal.
+        # not touch the AudioTag objects again.
         for tag in saved_tags:
             tag.is_dirty = False
             tag._staged_art = None
@@ -1133,14 +1192,23 @@ class MainWindow(QMainWindow):
         self._update_window_title([])
 
     def _update_window_title(self, tags: list):
-        """Show track context in the window title.
-        macOS: title bar only (dock/menu-bar already shows 'Craftag').
-        Windows: title bar only (OS pins the executable name to taskbars already where needed, 
-                 so setting just the text respects left-aligned title clarity constraints).
+        """Show track context in the window title (macOS only).
+
+        On macOS the title bar is centred and visually separate from the
+        dock/menu-bar app label, so using it for track context looks clean.
+
+        On Windows the title is left-aligned next to the app icon, making
+        the track name and the app name hard to distinguish.  The track
+        name is already displayed prominently in the editor’s centred
+        ``_lbl_title`` header, so we leave the Windows title bar as
+        “Craftag” and let the editor header carry the context.
         """
-        import sys
+        if sys.platform != "darwin":
+            # Windows / Linux: keep the static app name.
+            return
+
         if not tags:
-            self.setWindowTitle("" if sys.platform == "darwin" else "Craftag")
+            self.setWindowTitle("")
             return
 
         first = tags[0]
@@ -1152,7 +1220,6 @@ class MainWindow(QMainWindow):
         else:
             track_text = f"{len(tags)} files selected"
 
-        # Apply purely the track text so we don't duplicate "Craftag - ..." on Windows bars
         self.setWindowTitle(track_text)
 
     def _show_status(self, msg: str, is_error: bool):

@@ -26,7 +26,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject
 from PySide6.QtGui import QPixmap, QImage
 
 from craftag_py.core.tag_io import AudioTag, save_tag, read_art
-from craftag_py.ui.widgets import ArtLabel, HSep, StarRatingWidget
+from craftag_py.ui.widgets import ArtLabel, HSep, StarRatingWidget, CenteredTabWidget
 
 
 def _px_from_bytes(data: bytes) -> QPixmap:
@@ -150,7 +150,7 @@ class EditorPanel(QWidget):
         root.addSpacing(8)
 
         # ── Tabs ───────────────────────────────────────────────────────────
-        self._tabs = QTabWidget()
+        self._tabs = CenteredTabWidget()
         self._tabs.setObjectName("editorTabs")
         root.addWidget(self._tabs)
         root.addSpacing(12)
@@ -308,7 +308,7 @@ class EditorPanel(QWidget):
 
     def _set_enabled(self, on: bool):
         for w in (self._btn_save, self._btn_rename, self._btn_autofill, self._btn_remove_art,
-                  *self._all_fields_list()):
+                  self._f_rating, *self._all_fields_list()):
             w.setEnabled(on)
 
     def _all_lineedits(self):
