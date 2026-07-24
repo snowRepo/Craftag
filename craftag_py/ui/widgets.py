@@ -248,40 +248,7 @@ class SvgIconButton(QPushButton):
             self.setIcon(QIcon(pm))
 
 
-class CenteredTabWidget(QTabWidget):
-    """QTabWidget whose tab bar is always centred horizontally.
 
-    Qt's QSS ``alignment: center`` on ``QTabBar`` is silently ignored by the
-    Windows style engine, making tabs snap to the left on Windows regardless of
-    the stylesheet.  Overriding ``resizeEvent`` (and ``tabInserted``) to
-    programmatically reposition the tab bar is the only reliable
-    cross-platform solution.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.tabBar().setExpanding(False)
-
-    def _center_tab_bar(self):
-        tb = self.tabBar()
-        x = max(0, (self.width() - tb.sizeHint().width()) // 2)
-        tb.move(x, tb.y())
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._center_tab_bar()
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        self._center_tab_bar()
-
-    def tabInserted(self, index: int):
-        super().tabInserted(index)
-        self._center_tab_bar()
-
-    def tabRemoved(self, index: int):
-        super().tabRemoved(index)
-        self._center_tab_bar()
 
 
 class HSep(QFrame):

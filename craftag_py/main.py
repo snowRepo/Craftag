@@ -4,12 +4,17 @@ Run: python main.py
 """
 import sys
 import os
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from craftag_py.__version__ import VERSION
 from craftag_py.ui.main_window import MainWindow
 
+class CenterTabProxyStyle(QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_TabBar_Alignment:
+            return int(Qt.AlignmentFlag.AlignCenter)
+        return super().styleHint(hint, option, widget, returnData)
 
 def get_resource_path(relative_path: str) -> str:
     """Get absolute path to resource, handling PyInstaller's _MEIPASS on Windows."""
@@ -23,6 +28,11 @@ def get_resource_path(relative_path: str) -> str:
 def main():
     # High-DPI support (handled automatically in Qt6)
     app = QApplication(sys.argv)
+    
+    # Enforce cross-platform style and strictly center tabs
+    app.setStyle("Fusion")
+    app.setStyle(CenterTabProxyStyle(app.style()))
+    
     app.setApplicationName("Craftag")
     app.setApplicationDisplayName("Craftag")
     app.setApplicationVersion(VERSION)

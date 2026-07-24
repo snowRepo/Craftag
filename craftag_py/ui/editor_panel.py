@@ -26,7 +26,7 @@ from PySide6.QtCore import Qt, Signal, QThread, QObject
 from PySide6.QtGui import QPixmap, QImage
 
 from craftag_py.core.tag_io import AudioTag, save_tag, read_art
-from craftag_py.ui.widgets import ArtLabel, HSep, StarRatingWidget, CenteredTabWidget
+from craftag_py.ui.widgets import ArtLabel, HSep, StarRatingWidget
 
 
 def _px_from_bytes(data: bytes) -> QPixmap:
@@ -150,7 +150,7 @@ class EditorPanel(QWidget):
         root.addSpacing(8)
 
         # ── Tabs ───────────────────────────────────────────────────────────
-        self._tabs = CenteredTabWidget()
+        self._tabs = QTabWidget()
         self._tabs.setObjectName("editorTabs")
         root.addWidget(self._tabs)
         root.addSpacing(12)
