@@ -543,28 +543,31 @@ class MainWindow(QMainWindow):
     # ── Check for updates ────────────────────────────────────────────
 
     def _check_for_updates(self):
-        """Show a 'Checking...' dialog with spinner, then spin up UpdateWorker."""
+        """Non-blocking 'Checking...' dialog + background update worker.
+        Uses show() (not exec()) so the main event loop keeps running.
+        Connects to proper QObject slots on self so AutoConnection correctly
+        promotes to QueuedConnection across the thread boundary."""
         self._action_check_updates.setEnabled(False)
-        self._action_check_updates.setText("Checking…")
+        self._action_check_updates.setText("Checking\u2026")
 
-        # ── Build the "Checking for updates…" modal ──
+        # Non-blocking modal indicator — show(), NOT exec()
         checking_dlg = QDialog(self)
         checking_dlg.setWindowTitle("Check for Updates")
         checking_dlg.setWindowFlags(
             checking_dlg.windowFlags()
             & ~Qt.WindowType.WindowCloseButtonHint
         )
+        checking_dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         checking_dlg.setFixedSize(300, 72)
-
         chk_layout = QVBoxLayout(checking_dlg)
         chk_layout.setContentsMargins(20, 16, 20, 16)
-        chk_layout.setSpacing(10)
-
-        chk_lbl = QLabel("Checking for updates…")
+        chk_lbl = QLabel("Checking for updates\u2026")
         chk_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         chk_layout.addWidget(chk_lbl)
+        # Store on self so result slots (QObject methods) can close it
+        self._checking_dlg = checking_dlg
+        checking_dlg.show()
 
-        # ── Background worker ──
         thread = QThread(self)
         worker = UpdateWorker()
         worker.moveToThread(thread)
@@ -575,8 +578,7 @@ class MainWindow(QMainWindow):
 
         thread.started.connect(worker.run)
 
-        def _done():
-            checking_dlg.accept()   # close the spinner dialog first
+        def _cleanup():
             if (thread, worker) in self._update_workers:
                 self._update_workers.remove((thread, worker))
             worker.deleteLater()
@@ -584,18 +586,30 @@ class MainWindow(QMainWindow):
             self._action_check_updates.setEnabled(True)
             self._action_check_updates.setText("Check for Updates...")
 
+        # Connect to proper QObject methods on self (main thread).
+        # AutoConnection detects cross-thread QObject target and uses
+        # QueuedConnection — safe, no thread-affinity warnings.
         worker.up_to_date.connect(self._on_update_up_to_date)
         worker.update_available.connect(self._on_update_available)
         worker.error.connect(self._on_update_error)
         for sig in (worker.up_to_date, worker.update_available, worker.error):
             sig.connect(thread.quit)
-        thread.finished.connect(_done, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(_cleanup, Qt.ConnectionType.QueuedConnection)
         thread.start()
 
-        # Show the spinner dialog modally (blocks until _done() calls accept())
-        checking_dlg.exec()
+
+    def _close_checking_dlg(self):
+        """Close the update-checking indicator if it is still visible."""
+        dlg = getattr(self, "_checking_dlg", None)
+        if dlg is not None:
+            try:
+                dlg.accept()
+            except Exception:
+                pass
+            self._checking_dlg = None
 
     def _on_update_up_to_date(self):
+        self._close_checking_dlg()
         from craftag_py.__version__ import VERSION
         QMessageBox.information(
             self, "Up to Date",
@@ -603,6 +617,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_update_available(self, latest: str, dl_url: str):
+        self._close_checking_dlg()
         from craftag_py.__version__ import VERSION
         import platform
         import os
@@ -714,7 +729,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_update_error(self, msg: str):
-        self._show_status("", False)
+        self._close_checking_dlg()
         QMessageBox.warning(
             self, "Update Check Failed",
             f"Could not check for updates:\n{msg}"
