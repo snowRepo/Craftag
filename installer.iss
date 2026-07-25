@@ -1,7 +1,7 @@
 [Setup]
 ; Main Installer Settings
 AppName=Craftag
-AppVersion=1.0.5
+AppVersion=1.0.6
 AppPublisher=DevApps
 AppPublisherURL=https://devapps-online.vercel.app/
 DefaultDirName={autopf}\Craftag

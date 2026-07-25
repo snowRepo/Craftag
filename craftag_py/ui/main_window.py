@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings, QTimer
 from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent, QPixmap, QKeySequence, QShortcut, QAction, QGuiApplication, QPainter, QColor
+import sys
 
 from craftag_py.__version__ import VERSION
 from craftag_py.core.tag_io import AudioTag, read_tag, read_folder, save_tag
@@ -380,8 +381,9 @@ class MainWindow(QMainWindow):
         self._sync_system_theme()
 
         # React to live system appearance changes (macOS dark/light toggle)
-        hints = QGuiApplication.styleHints()
-        hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
+        # Store as instance var so we can disconnect it in closeEvent
+        self._style_hints = QGuiApplication.styleHints()
+        self._style_hints.colorSchemeChanged.connect(self._on_color_scheme_changed)
 
         QTimer.singleShot(0, self._check_eula)
 
@@ -393,6 +395,37 @@ class MainWindow(QMainWindow):
                 settings.setValue("eula_agreed", True)
             else:
                 QApplication.quit()
+
+    def closeEvent(self, event):
+        """Clean shutdown: disconnect live signals and join worker threads
+        to prevent PySide6/macOS segfaults during Qt object teardown."""
+        # Disconnect the system color-scheme signal FIRST — if it fires during
+        # teardown while the window's Python object is partially destroyed it
+        # causes a segfault on macOS.
+        try:
+            self._style_hints.colorSchemeChanged.disconnect(self._on_color_scheme_changed)
+        except Exception:
+            pass
+
+        # Gracefully stop any in-flight load/save/update worker threads.
+        # We wait up to 2 s per thread so they can finish writing to disk.
+        for thread, _ in list(getattr(self, "_workers", [])):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(2000)
+            except Exception:
+                pass
+
+        for thread, _ in list(getattr(self, "_update_workers", [])):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(1000)
+            except Exception:
+                pass
+
+        super().closeEvent(event)
 
     # ── UI ─────────────────────────────────────────────────────────────────
 
@@ -507,14 +540,31 @@ class MainWindow(QMainWindow):
         dlg = AboutDialog(self, dark=self._dark)
         dlg.exec()
 
-    # ── Check for updates ──────────────────────────────────────────────────────
+    # ── Check for updates ────────────────────────────────────────────
 
     def _check_for_updates(self):
-        """Spin up UpdateWorker on a thread and disable the menu item while checking."""
+        """Show a 'Checking...' dialog with spinner, then spin up UpdateWorker."""
         self._action_check_updates.setEnabled(False)
         self._action_check_updates.setText("Checking…")
-        self._show_status("Checking for updates…", False)
 
+        # ── Build the "Checking for updates…" modal ──
+        checking_dlg = QDialog(self)
+        checking_dlg.setWindowTitle("Check for Updates")
+        checking_dlg.setWindowFlags(
+            checking_dlg.windowFlags()
+            & ~Qt.WindowType.WindowCloseButtonHint
+        )
+        checking_dlg.setFixedSize(300, 72)
+
+        chk_layout = QVBoxLayout(checking_dlg)
+        chk_layout.setContentsMargins(20, 16, 20, 16)
+        chk_layout.setSpacing(10)
+
+        chk_lbl = QLabel("Checking for updates…")
+        chk_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        chk_layout.addWidget(chk_lbl)
+
+        # ── Background worker ──
         thread = QThread(self)
         worker = UpdateWorker()
         worker.moveToThread(thread)
@@ -526,6 +576,7 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
 
         def _done():
+            checking_dlg.accept()   # close the spinner dialog first
             if (thread, worker) in self._update_workers:
                 self._update_workers.remove((thread, worker))
             worker.deleteLater()
@@ -538,22 +589,20 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._on_update_error)
         for sig in (worker.up_to_date, worker.update_available, worker.error):
             sig.connect(thread.quit)
-        # QueuedConnection: _done re-enables a menu QAction from thread.finished
         thread.finished.connect(_done, Qt.ConnectionType.QueuedConnection)
         thread.start()
 
+        # Show the spinner dialog modally (blocks until _done() calls accept())
+        checking_dlg.exec()
+
     def _on_update_up_to_date(self):
         from craftag_py.__version__ import VERSION
-        self._show_status("", False)
         QMessageBox.information(
             self, "Up to Date",
             f"You are running the latest version of Craftag ({VERSION})."
         )
 
     def _on_update_available(self, latest: str, dl_url: str):
-        self._show_status("", False)
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QProgressBar
-        from PySide6.QtCore import QThread, QCoreApplication
         from craftag_py.__version__ import VERSION
         import platform
         import os
@@ -561,7 +610,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Update Available")
-        dlg.setFixedWidth(360)
+        dlg.setFixedWidth(380)
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
@@ -570,11 +619,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(lbl)
         layout.addWidget(QLabel(f"You are on version {VERSION}."))
 
-        prg = CustomProgressBar()
+        # Use native QProgressBar — reliable cross-platform rendering
+        prg = QProgressBar()
         prg.setRange(0, 100)
         prg.setValue(0)
+        prg.setFixedHeight(8)
+        prg.setTextVisible(False)
         prg.hide()
         layout.addWidget(prg)
+
+        status_lbl = QLabel("")
+        status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        status_lbl.hide()
+        layout.addWidget(status_lbl)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -587,8 +645,11 @@ class MainWindow(QMainWindow):
 
         def _start_download():
             dl_btn.setEnabled(False)
-            later_btn.hide()
+            later_btn.setEnabled(False)
             prg.show()
+            status_lbl.show()
+            status_lbl.setText("Starting download…")
+            dlg.setFixedHeight(dlg.sizeHint().height())
 
             if platform.system() == "Windows":
                 filename = "Craftag-Windows-Installer.exe"
@@ -596,7 +657,7 @@ class MainWindow(QMainWindow):
                 filename = "Craftag-macOS.dmg"
 
             github_url = f"https://github.com/snowRepo/Craftag/releases/download/v{latest}/{filename}"
-            
+
             self._dl_thread = QThread(dlg)
             self._dl_worker = DownloadWorker(github_url, filename)
             self._dl_worker.moveToThread(self._dl_thread)
@@ -604,31 +665,43 @@ class MainWindow(QMainWindow):
 
             def _on_prog(v):
                 prg.setValue(v)
+                status_lbl.setText(f"Downloading…  {v}%")
 
             def _on_fin(path):
+                prg.setValue(100)
+                status_lbl.hide()
                 prg.hide()
-                lbl.setText(f"<b>Ready to install!</b>")
+                lbl.setText("<b>Ready to install!</b>")
                 dl_btn.setText("Install Now")
                 dl_btn.setEnabled(True)
-                
+                later_btn.setEnabled(True)
+
                 dl_btn.clicked.disconnect()
-                
+
                 def _do_install():
                     try:
                         if platform.system() == "Windows":
                             os.startfile(path)
                         else:
-                            subprocess.run(["open", path])
-                        QCoreApplication.quit()
+                            subprocess.Popen(["open", path])
                     except Exception:
                         pass
-                        
+                    # Close the dialog cleanly, then quit the app after the
+                    # event loop has had a chance to flush pending events.
+                    dlg.accept()
+                    QTimer.singleShot(200, QApplication.quit)
+
                 dl_btn.clicked.connect(_do_install)
 
-            # QueuedConnection on both: _on_prog and _on_fin modify dialog
-            # widgets (QProgressBar, QLabel, QPushButton) that live on the
-            # GUI thread. Without QueuedConnection the download thread calls
-            # them directly — non-GUI thread widget access — segfault.
+            def _on_err(msg):
+                prg.hide()
+                status_lbl.hide()
+                lbl.setText("<b>Download failed.</b>")
+                dl_btn.setEnabled(False)
+                later_btn.setEnabled(True)
+                QMessageBox.warning(dlg, "Download Failed", msg)
+
+            # QueuedConnection: slots run on GUI thread (safe widget access)
             self._dl_worker.progress.connect(_on_prog, Qt.ConnectionType.QueuedConnection)
             self._dl_worker.finished.connect(_on_fin, Qt.ConnectionType.QueuedConnection)
             # Worker error could be handled gracefully, but we just print for now

@@ -46,7 +46,23 @@ def main():
 
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    ret = app.exec()
+
+    # ── PySide6 / macOS exit fix ─────────────────────────────────────────────
+    # After app.exec() returns, Qt has already begun tearing down its C++
+    # objects.  If Python's GC then runs (as sys.exit() triggers), it touches
+    # the same memory Qt just freed → segfault.
+    # Fix: explicitly delete the window so closeEvent fires in a clean state,
+    # process any remaining deferred-deletion events, then use os._exit() to
+    # skip Python GC teardown entirely.  This is the standard workaround for
+    # the known PySide6 macOS shutdown crash (PYSIDE-2268).
+    try:
+        window.close()
+        del window
+        app.processEvents()   # flush any pending deleteLater() calls
+    except Exception:
+        pass
+    os._exit(ret)
 
 
 if __name__ == "__main__":

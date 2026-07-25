@@ -9,6 +9,7 @@ Header layout (2 rows):
 """
 from __future__ import annotations
 from typing import List
+import sys
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
@@ -17,6 +18,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QShortcut, QKeySequence
+
+# Platform-aware modifier label for tooltips
+_MOD = "⌘" if sys.platform == "darwin" else "Ctrl"
 
 from craftag_py.core.tag_io import AudioTag
 from craftag_py.ui.widgets import SvgIconButton
@@ -175,13 +179,13 @@ class FileListPanel(QWidget):
         row1.addStretch()
 
         # ♫ open files
-        self._btn_open = SvgIconButton(_ICON_MUSIC, tooltip="Open audio files  (Ctrl+O)")
+        self._btn_open = SvgIconButton(_ICON_MUSIC, tooltip=f"Open audio files  ({_MOD}+O)")
         self._btn_open.setFixedSize(28, 28)
         self._btn_open.setObjectName("iconBtn")
         self._btn_open.clicked.connect(self.open_files_requested)
         row1.addWidget(self._btn_open)
         # 📂 open folder
-        self._btn_folder = SvgIconButton(_ICON_FOLDER, tooltip="Open folder  (Ctrl+Shift+O)")
+        self._btn_folder = SvgIconButton(_ICON_FOLDER, tooltip=f"Open folder  ({_MOD}+Shift+O)")
         self._btn_folder.setFixedSize(28, 28)
         self._btn_folder.setObjectName("iconBtn")
         self._btn_folder.clicked.connect(self.open_folder_requested)
